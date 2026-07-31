@@ -18,8 +18,8 @@ const cfg = loadConfig(process.env["WORKBENCH_DATA_DIR"]);
 const manifest = new Manifest(cfg.dataDir);
 
 // system/power singletons the daemon owns, with the real deps. KeepAwake is
-// started now and held for the whole process lifetime — the workbench must not
-// sleep out from under a phone that's driving it.
+// started at startup; the phone can toggle it (power.keepAwake) — the workbench
+// must not sleep out from under a phone that's driving it.
 const powerDeps = { spawn, exec };
 const keepAwake = new KeepAwake(powerDeps);
 keepAwake.start();

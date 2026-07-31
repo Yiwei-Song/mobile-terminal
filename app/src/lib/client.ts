@@ -148,8 +148,12 @@ export class WorkbenchClient {
       if (m.ok) p.resolve(m.data);
       else p.reject(new Error(m.error));
     } else if (m.type === "event") {
-      // Anything else is a variant from a newer daemon: ignored, not crashed on.
-      this.handlers.onEvent(m.event);
+      // The wire also carries machine events (machine.reboot); the store is
+      // session-only with no reboot UI in this plan, so they're dropped here at
+      // the one place wire data becomes typed. Excluding the sole MachineEvent
+      // kind narrows to SessionEvent — add a second machine kind and this line
+      // stops compiling, which is the reminder to decide what the app does with it.
+      if (m.event.kind !== "machine.reboot") this.handlers.onEvent(m.event);
     }
   }
 

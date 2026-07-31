@@ -13,6 +13,8 @@ export interface BootDeps {
 // auto-continue there is nothing here for it to do.
 export function runBootResume(manifest: Manifest, { lock, notify }: BootDeps): void {
   manifest.normalizeAfterRestart();
+  // Unconditional by design: privacy-by-default is lock-on-start, so there is no
+  // config knob to skip it — a daemon that came up must not leave the screen open.
   lock();
   // Dead sessions are gone for good; everything else came back (as idle).
   const restored = manifest.list().filter((s) => s.status !== "dead").length;

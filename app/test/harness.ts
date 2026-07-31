@@ -5,11 +5,11 @@ import { expect } from "vitest";
 
 import { loadConfig } from "../../daemon/src/config.js";
 import { startServer } from "../../daemon/src/server.js";
-import type { SessionEvent } from "../../daemon/src/protocol.js";
+import type { PushEvent } from "../../daemon/src/protocol.js";
 import { Manifest } from "../../daemon/src/sessions/manifest.js";
 import { Registry } from "../../daemon/src/sessions/registry.js";
 import type { ClaudeDeps } from "../../daemon/src/sessions/claude.js";
-import { init } from "../../daemon/test/fixtures.js";
+import { init, fakeMachine } from "../../daemon/test/fixtures.js";
 
 // The real daemon, in process. Nothing here is a mock of the server or the
 // registry — only the Claude CLI itself is faked, exactly as the daemon's own
@@ -47,8 +47,8 @@ export async function startDaemon(query: FakeQuery, opts: { dir?: string; port?:
   const manifest = new Manifest(dir);
   // Same knot index.ts has: the registry is the server's handler, so it exists
   // before the push it broadcasts through does.
-  let pushRef: (e: SessionEvent) => void = () => {};
-  const registry = new Registry({ query } as unknown as ClaudeDeps, manifest, (e) => pushRef(e), cfg);
+  let pushRef: (e: PushEvent) => void = () => {};
+  const registry = new Registry({ query } as unknown as ClaudeDeps, manifest, (e) => pushRef(e), cfg, fakeMachine().machine);
   const srv = await startServer(cfg, (method, params, push) => {
     pushRef = push;
     return registry.handle(method, params);
