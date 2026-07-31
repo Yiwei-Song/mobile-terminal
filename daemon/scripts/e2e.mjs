@@ -20,14 +20,26 @@ const scratch = join(parse(root).root, "wb-e2e");
 const dataDir = join(scratch, "data");
 const cwd = join(scratch, "cwd");
 const file = join(cwd, "hello.txt");
-const PORT = 8791;
+// Not 8791: a daemon the user actually runs sits there, and the two would fight
+// over the port (or worse, this would drive the live one).
+const PORT = Number(process.env.WORKBENCH_E2E_PORT ?? 18791);
 
 const log = (s) => console.log(s);
 const fail = (s) => { log(`FAIL: ${s}`); done(1); };
 
 let daemon = null;
 function done(code) {
-  daemon?.kill();
+  // kill() only reaps the node process; the Claude CLI it spawned is a
+  // grandchild and would linger holding the scratch dir open.
+  if (daemon) {
+    if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(daemon.pid), "/T", "/F"], { stdio: "ignore" });
+    else daemon.kill();
+  }
+  // A failed run keeps its scratch: hello.txt, the manifest and the config are
+  // the evidence. A passing run has nothing left worth reading.
+  if (code === 0) {
+    try { rmSync(scratch, { recursive: true, force: true }); } catch { /* the CLI may still hold a handle; not worth failing a pass over */ }
+  }
   process.exit(code);
 }
 
@@ -72,9 +84,12 @@ const ws = await (async () => {
 let seq = 0;
 const pend = new Map();
 const rpc = (method, params) =>
-  new Promise((res, rej) => {
+  new Promise((res) => {
     const id = String(++seq);
-    pend.set(id, { res, rej });
+    // A rejected RPC ends the run with a FAIL line. Rejecting for real would
+    // surface as an unhandled-rejection stack instead: every caller is awaited
+    // inside an event listener, so there is nothing up the stack to catch it.
+    pend.set(id, { res, rej: (e) => fail(`${method} rejected: ${e.message}`) });
     ws.send(JSON.stringify({ type: "req", id, method, params }));
   });
 
