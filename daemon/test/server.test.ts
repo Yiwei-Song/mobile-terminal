@@ -1,0 +1,93 @@
+import { describe, it, expect } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import WebSocket from "ws";
+import { loadConfig } from "../src/config.js";
+import { startServer } from "../src/server.js";
+
+const open = (port: number) => new WebSocket(`ws://127.0.0.1:${port}/ws`);
+const next = (ws: WebSocket) => new Promise<any>(r => ws.once("message", d => r(JSON.parse(d.toString()))));
+const closed = (ws: WebSocket) => new Promise<number>(r => ws.once("close", c => r(c)));
+const opened = (ws: WebSocket) => new Promise(r => ws.once("open", r));
+const cfgFor = () => ({ ...loadConfig(mkdtempSync(join(tmpdir(), "wb-"))), port: 0 });
+
+describe("server", () => {
+  it("rejects bad token with 4001, accepts good token, routes requests", async () => {
+    const cfg = cfgFor();
+    const srv = await startServer(cfg, async (method) => {
+      if (method === "sessions.list") return ["stub"];
+      throw new Error("unknown");
+    });
+
+    const bad = open(srv.port);
+    await opened(bad);
+    bad.send(JSON.stringify({ type: "auth", token: "wrong" }));
+    expect(await closed(bad)).toBe(4001);
+
+    const good = open(srv.port);
+    await opened(good);
+    good.send(JSON.stringify({ type: "auth", token: cfg.token }));
+    expect((await next(good)).type).toBe("auth.ok");
+    good.send(JSON.stringify({ type: "req", id: "7", method: "sessions.list" }));
+    expect(await next(good)).toEqual({ type: "res", id: "7", ok: true, data: ["stub"] });
+    good.close();
+    await srv.close();
+  });
+
+  it("closes 4001 when the first message is not auth, and on a missing token", async () => {
+    const srv = await startServer(cfgFor(), async () => "never");
+
+    const jumper = open(srv.port);
+    await opened(jumper);
+    jumper.send(JSON.stringify({ type: "req", id: "1", method: "sessions.list" }));
+    expect(await closed(jumper)).toBe(4001);
+
+    const empty = open(srv.port);
+    await opened(empty);
+    empty.send(JSON.stringify({ type: "auth" }));
+    expect(await closed(empty)).toBe(4001);
+
+    await srv.close();
+  });
+
+  it("reports handler errors and broadcasts pushed events to authed sockets", async () => {
+    const cfg = cfgFor();
+    const srv = await startServer(cfg, async (method, _params, push) => {
+      if (method === "sessions.interrupt") {
+        push({ kind: "session.done", sessionId: "s1", ok: true, costUsd: null });
+        return null;
+      }
+      throw new Error("boom");
+    });
+
+    const a = open(srv.port), b = open(srv.port);
+    // Listen on both up front: awaiting them in sequence would miss the second
+    // socket's "open", which fires while the first handshake is in flight.
+    const ready = [a, b].map(async ws => {
+      await opened(ws);
+      ws.send(JSON.stringify({ type: "auth", token: cfg.token }));
+      return next(ws);
+    });
+    await Promise.all(ready);
+
+    a.send(JSON.stringify({ type: "req", id: "1", method: "sessions.list" }));
+    expect(await next(a)).toEqual({ type: "res", id: "1", ok: false, error: "boom" });
+
+    const onB = next(b);
+    a.send(JSON.stringify({ type: "req", id: "2", method: "sessions.interrupt", params: { sessionId: "s1" } }));
+    expect(await onB).toEqual({ type: "event", event: { kind: "session.done", sessionId: "s1", ok: true, costUsd: null } });
+
+    a.close(); b.close();
+    await srv.close();
+  });
+
+  it("serves the debug page at /", async () => {
+    const srv = await startServer(cfgFor(), async () => null);
+    const res = await fetch(`http://127.0.0.1:${srv.port}/`);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expect(await res.text()).toContain("<h1>");
+    expect((await fetch(`http://127.0.0.1:${srv.port}/nope`)).status).toBe(404);
+    await srv.close();
+  });
+});
