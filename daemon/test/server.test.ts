@@ -51,6 +51,17 @@ describe("server", () => {
     await srv.close();
   });
 
+  it("closes 4001 on a malformed first frame instead of throwing", async () => {
+    const srv = await startServer(cfgFor(), async () => "never");
+
+    const garbage = open(srv.port);
+    await opened(garbage);
+    garbage.send("not json");
+    expect(await closed(garbage)).toBe(4001);
+
+    await srv.close();
+  });
+
   it("reports handler errors and broadcasts pushed events to authed sockets", async () => {
     const cfg = cfgFor();
     const srv = await startServer(cfg, async (method, _params, push) => {
@@ -79,6 +90,29 @@ describe("server", () => {
     expect(await onB).toEqual({ type: "event", event: { kind: "session.done", sessionId: "s1", ok: true, costUsd: null } });
 
     a.close(); b.close();
+    await srv.close();
+  });
+
+  it("never pushes to a socket that has not authenticated", async () => {
+    const cfg = cfgFor();
+    const srv = await startServer(cfg, async (method, _params, push) => {
+      push({ kind: "session.done", sessionId: "s1", ok: true, costUsd: null });
+      return null;
+    });
+
+    const a = open(srv.port), lurker = open(srv.port);
+    let lurkerMsgs = 0;
+    lurker.on("message", () => lurkerMsgs++);
+    await Promise.all([opened(a), opened(lurker)]); // lurker authenticates never
+    a.send(JSON.stringify({ type: "auth", token: cfg.token }));
+    await next(a);
+
+    const onA = next(a);
+    a.send(JSON.stringify({ type: "req", id: "1", method: "sessions.interrupt", params: { sessionId: "s1" } }));
+    expect(await onA).toEqual({ type: "event", event: { kind: "session.done", sessionId: "s1", ok: true, costUsd: null } });
+    expect(lurkerMsgs).toBe(0);
+
+    a.close(); lurker.close();
     await srv.close();
   });
 
