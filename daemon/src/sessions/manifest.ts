@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { SessionStatus } from "../protocol.js";
 
@@ -29,8 +29,13 @@ export class Manifest {
 
   // ponytail: write-through on every mutation, no debounce. Sessions change a
   // few times a minute, not a second — batch it if that ever stops being true.
+  // Write-then-rename: a crash mid-write must not leave truncated JSON here,
+  // or the constructor's parse would throw on every boot after — bricking the
+  // reboot-resume path this file exists to serve.
   private flush(): void {
-    writeFileSync(this.file, JSON.stringify([...this.entries.values()], null, 2));
+    const tmp = `${this.file}.tmp`;
+    writeFileSync(tmp, JSON.stringify([...this.entries.values()], null, 2));
+    renameSync(tmp, this.file);
   }
 
   upsert(e: ManifestEntry): void {
