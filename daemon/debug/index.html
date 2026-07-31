@@ -1,4 +1,195 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>workbench debug</title>
-<h1>debug page: Task 8</h1>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>workbench</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 12px; font: 15px/1.4 system-ui, sans-serif; background: #111; color: #eee; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  section { margin-bottom: 12px; }
+  input, textarea, button { font: inherit; width: 100%; padding: 10px; border-radius: 8px;
+    border: 1px solid #444; background: #1c1c1c; color: #eee; }
+  /* 44px targets: this is driven with a thumb, not a mouse. */
+  button { background: #2b6; color: #041; border: 0; font-weight: 600; min-height: 44px; }
+  button.ghost { background: #333; color: #eee; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  .row > .narrow { flex: 0 0 90px; }
+  #status { font-size: 13px; color: #999; margin: 6px 0; }
+  #sessions button { text-align: left; background: #1c1c1c; color: #eee; border: 1px solid #444;
+    margin-bottom: 6px; font-weight: 400; }
+  #sessions button.sel { border-color: #2b6; }
+  .badge { font-size: 11px; text-transform: uppercase; color: #999; }
+  .badge.waiting_on_user { color: #fb4; } .badge.running { color: #6be; } .badge.dead { color: #f66; }
+  .ask { background: #4a2; color: #061; padding: 10px; border-radius: 8px; margin-bottom: 8px; }
+  .ask p { margin: 0 0 8px; word-break: break-word; }
+  #transcript { height: 45vh; overflow-y: auto; background: #000; border: 1px solid #333;
+    border-radius: 8px; padding: 8px; font: 13px/1.35 ui-monospace, monospace; white-space: pre-wrap; }
+  #transcript div { margin-bottom: 6px; word-break: break-word; }
+  .who { color: #777; }
+</style>
+
+<h1>workbench</h1>
+
+<section id="auth">
+  <div class="row">
+    <input id="token" placeholder="token" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button class="narrow" id="connect">go</button>
+  </div>
+  <div id="status">not connected</div>
+</section>
+
+<section id="asks"></section>
+
+<section id="sessions"></section>
+
+<section>
+  <form id="new">
+    <div class="row"><input id="cwd" placeholder="cwd" autocapitalize="off" spellcheck="false"></div>
+    <div class="row" style="margin-top:6px">
+      <input id="prompt" placeholder="new session prompt">
+      <button class="narrow" type="submit">new</button>
+    </div>
+  </form>
+</section>
+
+<section id="transcript"></section>
+
+<section>
+  <div class="row" style="margin-top:8px">
+    <input id="msg" placeholder="reply">
+    <button class="narrow" id="send">send</button>
+    <button class="narrow ghost" id="interrupt">stop</button>
+  </div>
+</section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let ws = null, seq = 0, sel = null;
+const pending = new Map();
+
+const status = (s) => { $("status").textContent = s; };
+
+function rpc(method, params) {
+  return new Promise((res, rej) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return rej(new Error("not connected"));
+    const id = String(++seq);
+    pending.set(id, { res, rej });
+    ws.send(JSON.stringify({ type: "req", id, method, params }));
+  });
+}
+// Every call is fire-and-forget from a thumb; a failure belongs in the status line.
+const call = (m, p) => rpc(m, p).catch((e) => { status(e.message); throw e; });
+
+function connect() {
+  const token = $("token").value.trim();
+  localStorage.setItem("wb-token", token);
+  if (ws) ws.close();
+  ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+  ws.onopen = () => ws.send(JSON.stringify({ type: "auth", token }));
+  ws.onclose = (e) => status(`disconnected (${e.code}${e.reason ? " " + e.reason : ""})`);
+  ws.onerror = () => status("connection error");
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.type === "auth.ok") {
+      status("connected — daemon " + m.version);
+      // There is no "session removed" event, so the list is only ever truth at
+      // (re)connect time. Always re-fetch rather than trusting a stale render.
+      refresh();
+    } else if (m.type === "res") {
+      const p = pending.get(m.id);
+      pending.delete(m.id);
+      if (p) m.ok ? p.res(m.data) : p.rej(new Error(m.error));
+    } else if (m.type === "event") {
+      onEvent(m.event);
+    }
+  };
+}
+
+function onEvent(e) {
+  // Status/done are the only events that change the list or its order; the
+  // daemon already sorts needs-attention first, so a re-fetch is the whole job.
+  if (e.kind === "session.status" || e.kind === "session.done") refresh();
+  if (e.kind === "session.permission") ask(e);
+  if (e.sessionId !== sel) return;
+  if (e.kind === "session.text") line(e.role, e.text);
+  if (e.kind === "session.tool") line("tool", e.summary);
+  if (e.kind === "session.done") line("done", `ok=${e.ok} cost=${e.costUsd ?? "?"}`);
+}
+
+function line(who, text) {
+  const d = document.createElement("div");
+  d.innerHTML = `<span class="who"></span>`;
+  d.firstChild.textContent = who + " ";
+  d.append(text);
+  const t = $("transcript");
+  const stick = t.scrollTop + t.clientHeight >= t.scrollHeight - 30;
+  t.append(d);
+  if (stick) t.scrollTop = t.scrollHeight;
+}
+
+// One banner per outstanding request: Claude asks for several tools at once and
+// a single-slot banner would drop all but the last.
+function ask(e) {
+  const box = document.createElement("div");
+  box.className = "ask";
+  const p = document.createElement("p");
+  p.textContent = e.summary;
+  const row = document.createElement("div");
+  row.className = "row";
+  for (const [label, allow] of [["allow", true], ["deny", false]]) {
+    const b = document.createElement("button");
+    b.textContent = label;
+    if (!allow) b.className = "ghost";
+    b.onclick = () => {
+      box.remove();
+      call("sessions.approve", { sessionId: e.sessionId, requestId: e.requestId, allow });
+    };
+    row.append(b);
+  }
+  box.append(p, row);
+  $("asks").append(box);
+}
+
+async function refresh() {
+  const list = await call("sessions.list");
+  const box = $("sessions");
+  box.textContent = "";
+  for (const s of list) {
+    const b = document.createElement("button");
+    if (s.sessionId === sel) b.className = "sel";
+    b.innerHTML = `<span class="badge"></span><br>`;
+    b.firstChild.className = "badge " + s.status;
+    b.firstChild.textContent = s.status;
+    b.append(s.title || s.sessionId.slice(0, 8));
+    b.onclick = () => { select(s.sessionId); };
+    box.append(b);
+  }
+}
+
+function select(id) {
+  sel = id;
+  $("transcript").textContent = "";
+  refresh();
+}
+
+$("connect").onclick = connect;
+$("new").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const r = await call("sessions.new", { cwd: $("cwd").value.trim(), prompt: $("prompt").value });
+  $("prompt").value = "";
+  select(r.sessionId);
+};
+$("send").onclick = () => {
+  if (!sel) return status("no session selected");
+  const text = $("msg").value;
+  $("msg").value = "";
+  line("user", text);
+  call("sessions.send", { sessionId: sel, text });
+};
+$("interrupt").onclick = () => sel ? call("sessions.interrupt", { sessionId: sel }) : status("no session selected");
+
+$("token").value = localStorage.getItem("wb-token") ?? "";
+if ($("token").value) connect();
+</script>
