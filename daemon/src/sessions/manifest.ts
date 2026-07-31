@@ -1,15 +1,10 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { SessionStatus } from "../protocol.js";
+import type { SessionRow, SessionStatus } from "../protocol.js";
 
-export interface ManifestEntry {
-  sessionId: string;
-  agent: "claude";
-  cwd: string;
-  title: string;
-  status: SessionStatus;
-  updatedAt: string; // ISO
-}
+// The manifest entry IS the sessions.list row; protocol.ts owns the shape so the
+// app gets it from shared/protocol.ts. Alias kept — every caller here says entry.
+export type ManifestEntry = SessionRow;
 
 // List order = attention order: what needs the user first, what is dead last.
 const ORDER: SessionStatus[] = ["waiting_on_user", "running", "idle", "dead"];

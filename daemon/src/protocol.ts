@@ -18,6 +18,16 @@ export type ServerMsg =
 
 export type SessionStatus = "running" | "waiting_on_user" | "idle" | "dead";
 
+// A row of sessions.list — also the on-disk manifest entry shape.
+export interface SessionRow {
+  sessionId: string;
+  agent: "claude";
+  cwd: string;
+  title: string;
+  status: SessionStatus;
+  updatedAt: string; // ISO
+}
+
 export type SessionEvent =
   | { kind: "session.status"; sessionId: string; status: SessionStatus; title: string }
   | { kind: "session.text"; sessionId: string; role: "assistant" | "user"; text: string }
