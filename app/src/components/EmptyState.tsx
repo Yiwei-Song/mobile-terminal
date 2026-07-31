@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
 import type { LucideIcon } from "lucide-react-native";
 
-import { color, icon as iconSize, space } from "../theme";
+import { color, icon as iconSize, space, stroke } from "../theme";
 import { Text } from "./Text";
 
 export type EmptyStateProps = {
@@ -16,7 +16,7 @@ export type EmptyStateProps = {
 export function EmptyState({ icon: Icon, title, body, action }: EmptyStateProps) {
   return (
     <View style={styles.wrap}>
-      <Icon size={iconSize.xl} color={color.idle} strokeWidth={1.5} />
+      <Icon size={iconSize.xl} color={color.idle} strokeWidth={stroke.icon} />
       <Text variant="h2" style={styles.center}>
         {title}
       </Text>

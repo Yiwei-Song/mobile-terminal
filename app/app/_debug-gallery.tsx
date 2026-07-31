@@ -106,6 +106,10 @@ export default function DebugGallery() {
             <Button label="Deny" variant="danger" icon={X} fill />
             <Button label="Allow" variant="primary" icon={Check} fill />
           </View>
+          <View style={styles.buttonRow}>
+            <Button label="Outline" variant="outline" fill />
+            <Button label="Ghost" variant="ghost" fill />
+          </View>
         </Section>
 
         <Section title="Cards">
@@ -131,6 +135,27 @@ export default function DebugGallery() {
             </View>
             <MonoText>exit code 1</MonoText>
           </Card>
+          <Card accentEdge="accent">
+            <View style={styles.cardHead}>
+              <Text variant="h2">Working</Text>
+              <StatusChip status="running" />
+            </View>
+            <MonoText>npm run build</MonoText>
+          </Card>
+        </Section>
+
+        <Section title="Screen — gutter={false}">
+          <Text variant="sub" color="textMut">
+            Edge-to-edge: the row below touches both sides. `gutter` (default) would inset it by
+            space(4), like every other section on this page.
+          </Text>
+          <View style={styles.frame}>
+            <Screen gutter={false}>
+              <View style={styles.bleedRow}>
+                <Text variant="body">full-bleed row</Text>
+              </View>
+            </Screen>
+          </View>
         </Section>
 
         <Section title="Mono text">
@@ -203,4 +228,16 @@ const styles = StyleSheet.create({
     borderColor: color.border,
   },
   emptyBox: { height: space(60) },
+  frame: {
+    height: space(24),
+    borderRadius: radius.card,
+    borderWidth: stroke.hairline,
+    borderColor: color.border,
+    overflow: "hidden",
+  },
+  bleedRow: {
+    backgroundColor: color.surfaceHi,
+    paddingVertical: space(3),
+    paddingHorizontal: space(4),
+  },
 });

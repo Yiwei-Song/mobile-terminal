@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -65,6 +65,13 @@ export function Button({
   const fade = useRef(new Animated.Value(opacity.full)).current;
   const inert = disabled || loading;
   const role = labelColorFor[variant];
+
+  // Going inert mid-press swallows onPressOut (the Pressable is disabled before
+  // it fires), which would strand `fade` at pressed and show a 60% button once
+  // the press fade takes over again. Reset it whenever the button goes inert.
+  useEffect(() => {
+    if (inert) fade.setValue(opacity.full);
+  }, [inert, fade]);
 
   const animate = (to: number) =>
     Animated.timing(fade, {

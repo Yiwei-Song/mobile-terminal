@@ -38,8 +38,8 @@ export const motion = { fast: 150, base: 200, slow: 250 } as const;
 /** Opacity steps (pressed / disabled feedback). */
 export const opacity = { pressed: 0.6, disabled: 0.45, full: 1 } as const;
 
-/** Border widths. */
-export const stroke = { hairline: 1, emphasis: 3 } as const;
+/** Stroke widths: borders, plus the lighter weight lucide icons draw with. */
+export const stroke = { hairline: 1, emphasis: 3, icon: 1.5 } as const;
 
 /** Icon sizes on the 4pt grid. */
 export const icon = { sm: 16, md: 20, lg: 24, xl: 40 } as const;

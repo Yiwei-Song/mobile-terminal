@@ -8,8 +8,10 @@ const repoRoot = path.resolve(projectRoot, "..");
 const config = getDefaultConfig(projectRoot);
 
 // The app is a nested package in a plain (non-workspace) repo: watch the repo
-// root so `shared/` edits trigger a reload, and keep module resolution pinned to
-// app/node_modules so files outside projectRoot still find their deps.
+// root so `shared/` edits trigger a reload, and add app/node_modules to the
+// resolver search list so files outside projectRoot still find their deps.
+// (nodeModulesPaths is additive — Metro still walks node_modules up from the
+// importing file; this just guarantees app/node_modules is always reachable.)
 config.watchFolders = [repoRoot];
 config.resolver.nodeModulesPaths = [path.resolve(projectRoot, "node_modules")];
 
