@@ -1,6 +1,8 @@
 import type { ServerMsg, SessionEvent } from "@shared/protocol";
 
-export type ConnState = "connecting" | "online" | "offline";
+// "unauthorized" is terminal: the daemon rejected the token, so the pairing
+// screen has to get involved. Every other state is on its way somewhere.
+export type ConnState = "connecting" | "online" | "offline" | "unauthorized";
 
 export interface ClientHandlers {
   onEvent(e: SessionEvent): void;
@@ -91,17 +93,28 @@ export class WorkbenchClient {
   private open(): void {
     this.handlers.onState("connecting", this.lastSeen);
     const ws = new WebSocket(this.url);
+    // No keepalive timer here on purpose: the daemon pings, and both React
+    // Native's and the browser's WebSocket answer pings inside the runtime —
+    // pongs are not even visible to JS, so there is nothing for us to do.
     this.ws = ws;
     ws.onopen = () => ws.send(JSON.stringify({ type: "auth", token: this.token }));
     ws.onmessage = (ev) => this.receive(ev.data);
     // A refused connect fires "error" then "close". Close is the only path that
     // retries; this handler exists so the error is not unhandled.
     ws.onerror = () => {};
-    ws.onclose = () => {
+    // The daemon answers a bad token with close code 4001 and nothing else, so
+    // the close event is the only place auth failure is visible.
+    ws.onclose = (ev) => {
       if (this.ws !== ws) return; // superseded by close() or a newer socket
       this.ws = null;
       this.authed = false;
       this.failPending("connection closed");
+      if (ev.code === 4001) {
+        // Retrying sends the same stale token forever. Stop and let the UI re-pair.
+        this.stopped = true;
+        this.handlers.onState("unauthorized", this.lastSeen);
+        return;
+      }
       this.handlers.onState("offline", this.lastSeen);
       if (this.stopped) return;
       const delay = Math.min(this.base * 2 ** this.attempt, this.base * CAP_STEPS);
@@ -134,7 +147,8 @@ export class WorkbenchClient {
       clearTimeout(p.timer);
       if (m.ok) p.resolve(m.data);
       else p.reject(new Error(m.error));
-    } else {
+    } else if (m.type === "event") {
+      // Anything else is a variant from a newer daemon: ignored, not crashed on.
       this.handlers.onEvent(m.event);
     }
   }

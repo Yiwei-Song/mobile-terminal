@@ -10,6 +10,9 @@ import { Manifest } from "../src/sessions/manifest.js";
 import { Registry } from "../src/sessions/registry.js";
 
 const open = (port: number) => new WebSocket(`ws://127.0.0.1:${port}/ws`);
+// ws answers pings for you unless you ask it not to — the one supported way to
+// simulate a phone whose radio died without also faking the socket.
+const openDeaf = (port: number) => new WebSocket(`ws://127.0.0.1:${port}/ws`, { autoPong: false });
 const next = (ws: WebSocket) => new Promise<any>(r => ws.once("message", d => r(JSON.parse(d.toString()))));
 const closed = (ws: WebSocket) => new Promise<number>(r => ws.once("close", c => r(c)));
 const opened = (ws: WebSocket) => new Promise(r => ws.once("open", r));
@@ -117,6 +120,32 @@ describe("server", () => {
     expect(lurkerMsgs).toBe(0);
 
     a.close(); lurker.close();
+    await srv.close();
+  });
+
+  it("pings authed sockets, keeps the answering one and terminates the silent one", async () => {
+    const cfg = cfgFor();
+    // Same shape as production, three orders of magnitude faster.
+    const srv = await startServer(cfg, async () => null, { pingMs: 25, pongMs: 25 });
+
+    const live = openDeaf(srv.port), deaf = openDeaf(srv.port);
+    // live answers by hand; deaf never does. Both sockets are otherwise identical,
+    // so the only variable in the test is the pong.
+    live.on("ping", () => live.pong());
+    let pings = 0;
+    live.on("ping", () => pings++);
+    await Promise.all([live, deaf].map(async (ws) => {
+      await opened(ws);
+      ws.send(JSON.stringify({ type: "auth", token: cfg.token }));
+      return next(ws);
+    }));
+
+    // terminate() destroys the socket without a close frame: 1006, not 1000.
+    expect(await closed(deaf)).toBe(1006);
+    expect(live.readyState).toBe(WebSocket.OPEN);
+    expect(pings).toBeGreaterThan(0);
+
+    live.close();
     await srv.close();
   });
 

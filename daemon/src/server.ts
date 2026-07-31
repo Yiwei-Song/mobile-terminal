@@ -11,7 +11,15 @@ import { VERSION } from "./version.js";
 // A thrown Error becomes { ok: false, error: message } — handlers signal failure by throwing.
 export type RequestHandler = (method: string, params: any, push: (e: SessionEvent) => void) => Promise<unknown>;
 
-export function startServer(cfg: Config, handler: RequestHandler) {
+// Injectable only so the liveness test can run in milliseconds instead of a minute.
+export interface ServerOpts {
+  pingMs?: number;
+  pongMs?: number;
+}
+
+export function startServer(cfg: Config, handler: RequestHandler, opts: ServerOpts = {}) {
+  const pingMs = opts.pingMs ?? 30_000;
+  const pongMs = opts.pongMs ?? 10_000;
   const debugHtml = join(dirname(fileURLToPath(import.meta.url)), "..", "debug", "index.html");
   const expected = Buffer.from(cfg.token);
   // Length check first: timingSafeEqual throws on a length mismatch, and the
@@ -52,7 +60,18 @@ export function startServer(cfg: Config, handler: RequestHandler) {
       const m = parseClientMsg(raw.toString());
       if (m?.type !== "auth" || !tokenOk(m.token)) return ws.close(4001, "unauthorized");
       authed.add(ws);
-      ws.on("close", () => authed.delete(ws));
+      // A phone that walks out of wifi range never sends a FIN: the daemon would
+      // hold a dead socket and broadcast into it forever. No client-side timer
+      // answers this — React Native's and the browser's WebSocket both reply to
+      // pings in the runtime, below any JS we could write.
+      let alive = true;
+      ws.on("pong", () => { alive = true; });
+      const ping = setInterval(() => {
+        alive = false;
+        ws.ping();
+        setTimeout(() => { if (!alive) ws.terminate(); }, pongMs);
+      }, pingMs);
+      ws.on("close", () => { authed.delete(ws); clearInterval(ping); });
       send(ws, { type: "auth.ok", version: VERSION });
       ws.on("message", async (r) => {
         const msg = parseClientMsg(r.toString());

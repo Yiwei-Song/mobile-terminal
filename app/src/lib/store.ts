@@ -23,10 +23,16 @@ export interface Workbench {
   // config.get's answer: hostname + version are what the header shows, and the
   // ntfy topic it also carries is what the settings screen will need.
   machine: ConfigInfo | null;
+  // Why the last thing the user asked for did not happen. Cleared by the next
+  // one that does: a failed action is state, not a silent no-op.
+  lastError: string | null;
 
   connect(url: string, token: string, opts?: ClientOpts): void;
   disconnect(): void;
-  refreshSessions(): Promise<void>;
+  // userInitiated marks the pull-to-refresh path — only that one is worth a
+  // banner. The automatic re-list on every reconnect fails all the time by
+  // design and reporting it would make the screen shout at a walk out of range.
+  refreshSessions(userInitiated?: boolean): Promise<void>;
   applyEvent(e: SessionEvent): void;
   newSession(cwd: string, prompt: string, title?: string): Promise<string>;
   send(sessionId: string, text: string): Promise<void>;
@@ -68,6 +74,7 @@ export const useWorkbench = create<Workbench>((set, get) => ({
   connState: "offline",
   lastSeen: undefined,
   machine: null,
+  lastError: null,
 
   connect(url, token, opts) {
     get().disconnect();
@@ -98,21 +105,29 @@ export const useWorkbench = create<Workbench>((set, get) => ({
     client = null;
     buffered = [];
     refreshing = false;
-    set({ sessions: [], transcripts: {}, pendingApprovals: {}, connState: "offline", machine: null });
+    set({ sessions: [], transcripts: {}, pendingApprovals: {}, connState: "offline", machine: null, lastError: null });
   },
 
-  async refreshSessions() {
+  async refreshSessions(userInitiated) {
     if (client === null) return;
     refreshing = true;
     try {
       // Trust the server's order: the manifest already sorts attention-first.
-      set({ sessions: await client.request<SessionRow[]>("sessions.list") });
+      const req = client.request<SessionRow[]>("sessions.list");
+      set({ sessions: await (userInitiated === true ? track(req) : req) });
     } finally {
       refreshing = false;
     }
     const held = buffered;
     buffered = [];
     const known = new Set(get().sessions.map((s) => s.sessionId));
+    // This list is the only truth about which sessions still exist — the daemon
+    // has no "session removed" event. Whatever it left out is gone, and holding
+    // its transcript means a detail screen could still render a dead session.
+    set({
+      transcripts: onlyKnown(get().transcripts, known),
+      pendingApprovals: onlyKnown(get().pendingApprovals, known),
+    });
     // Anything still unknown belongs to a session this refresh did not return —
     // dropping it is what keeps the buffer from growing without bound.
     for (const e of held) if (known.has(e.sessionId)) get().applyEvent(e);
@@ -175,13 +190,13 @@ export const useWorkbench = create<Workbench>((set, get) => ({
   async newSession(cwd, prompt, title) {
     // Empty title means "use the prompt's first line", which the daemon does for
     // an absent field. JSON has no undefined, so `null` would fail its validator.
-    const r = await must().request<{ sessionId: string }>("sessions.new", { cwd, prompt, title: title || undefined });
+    const r = await track(must().request<{ sessionId: string }>("sessions.new", { cwd, prompt, title: title || undefined }));
     await get().refreshSessions();
     return r.sessionId;
   },
 
   async send(sessionId, text) {
-    await must().request("sessions.send", { sessionId, text });
+    await track(must().request("sessions.send", { sessionId, text }));
   },
 
   async interrupt(sessionId) {
@@ -192,15 +207,38 @@ export const useWorkbench = create<Workbench>((set, get) => ({
     // Drop the card first: the thumb has answered, and a failed request leaves
     // the session's next status event to tell the truth.
     const list = (get().pendingApprovals[sessionId] ?? []).filter((a) => a.requestId !== requestId);
-    set({ pendingApprovals: { ...get().pendingApprovals, [sessionId]: list } });
-    await must().request("sessions.approve", { sessionId, requestId, allow });
+    // Last card answered drops the key, not an empty array: `in` and Object.keys
+    // are how a screen asks whether a session is waiting on the user.
+    set({
+      pendingApprovals:
+        list.length > 0
+          ? { ...get().pendingApprovals, [sessionId]: list }
+          : without(get().pendingApprovals, sessionId),
+    });
+    await track(must().request("sessions.approve", { sessionId, requestId, allow }));
   },
 }));
+
+const onlyKnown = <T>(map: Record<string, T | undefined>, known: Set<string>): Record<string, T | undefined> =>
+  Object.fromEntries(Object.entries(map).filter(([id]) => known.has(id)));
 
 const without = <T>(map: Record<string, T>, key: string): Record<string, T> => {
   const rest = { ...map };
   delete rest[key];
   return rest;
+};
+
+// Every user-initiated action goes through here: succeed and the banner clears,
+// fail and the reason survives the rejection the caller still gets.
+const track = async <T>(p: Promise<T>): Promise<T> => {
+  try {
+    const r = await p;
+    useWorkbench.setState({ lastError: null });
+    return r;
+  } catch (e) {
+    useWorkbench.setState({ lastError: e instanceof Error ? e.message : String(e) });
+    throw e;
+  }
 };
 
 const must = (): WorkbenchClient => {

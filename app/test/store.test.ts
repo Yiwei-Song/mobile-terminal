@@ -60,7 +60,9 @@ describe("workbench store", () => {
 
     const answered = state().approve(id, ask.requestId, true);
     // Not awaited: the card goes the moment the thumb lands, not a round-trip later.
-    expect(state().pendingApprovals[id]).toEqual([]);
+    // The key goes with it — an empty array is a session that still renders a
+    // (blank) approval area to anything that checks for presence.
+    expect(state().pendingApprovals).toEqual({});
     await answered;
     await until("SDK answered", () => answers.length === 1);
     expect(answers).toEqual(["allow"]);
@@ -179,5 +181,52 @@ describe("workbench store", () => {
     await expect(state().send("s1", "hi")).rejects.toThrow("offline");
     await expect(state().interrupt("s1")).rejects.toThrow("offline");
     await expect(state().newSession("C:\\proj", "nope")).rejects.toThrow("offline");
+  });
+
+  it("forgets the transcript and approvals of a session the daemon no longer lists", async () => {
+    const { query } = asksOnce();
+    const d = await startDaemon(query);
+    await online(d.url, d.token);
+
+    const id = await state().newSession("C:\\proj", "do the thing");
+    await until("approval raised", () => (state().pendingApprovals[id] ?? []).length === 1);
+    expect(state().transcripts[id]).toBeTruthy();
+
+    // The session is deleted on the laptop while the phone holds its transcript.
+    await d.close();
+    await until("offline", () => state().connState === "offline");
+    rmSync(join(d.dir, "sessions.json"));
+    const again = await startDaemon(idle(), { dir: d.dir, port: d.port });
+    await until("re-listed", () => state().connState === "online" && state().sessions.length === 0);
+
+    // Left behind, these grow for the life of the app and would repopulate a
+    // detail screen for a session that no longer exists.
+    expect(state().transcripts).toEqual({});
+    expect(state().pendingApprovals).toEqual({});
+
+    await again.close();
+  });
+
+  it("keeps the reason a user-initiated action failed", async () => {
+    const d = await startDaemon(idle());
+    await online(d.url, d.token);
+    expect(state().lastError).toBeNull();
+
+    await d.close();
+    await until("offline", () => state().connState === "offline");
+
+    await expect(state().send("s1", "hi")).rejects.toThrow();
+    expect(state().lastError).toContain("offline");
+    // A pull-to-refresh reports; the automatic re-list on reconnect does not.
+    useWorkbench.setState({ lastError: null });
+    await expect(state().refreshSessions(true)).rejects.toThrow();
+    expect(state().lastError).toContain("offline");
+
+    const again = await startDaemon(idle(), { dir: d.dir, port: d.port });
+    await until("back online", () => state().connState === "online");
+    await state().newSession("C:\\proj", "works now");
+    expect(state().lastError).toBeNull();
+
+    await again.close();
   });
 });

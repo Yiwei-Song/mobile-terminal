@@ -110,6 +110,69 @@ describe("WorkbenchClient", () => {
     expect(states.length).toBe(seen);
   });
 
+  it("gives up on a rejected token instead of retrying it forever", async () => {
+    const d = await startDaemon(idle());
+    const states: ConnState[] = [];
+    const client = new WorkbenchClient(
+      d.url,
+      "not-the-token",
+      { onEvent: () => {}, onState: (s) => states.push(s) },
+      { baseDelayMs: 10 },
+    );
+    client.connect();
+
+    // Distinct from "offline": the pairing screen re-pairs on this, and a stale
+    // token never fixes itself no matter how long we back off.
+    await until("rejected", () => states.includes("unauthorized"));
+    const tries = states.filter((s) => s === "connecting").length;
+    await new Promise((r) => setTimeout(r, 80)); // several base delays
+    expect(states.filter((s) => s === "connecting").length).toBe(tries);
+    expect(states).toEqual(["connecting", "unauthorized"]);
+
+    client.close();
+    await d.close();
+  });
+
+  it("doubles the delay between reconnect attempts", async () => {
+    const d = await startDaemon(idle());
+    const at: number[] = [];
+    const client = new WorkbenchClient(
+      d.url,
+      d.token,
+      { onEvent: () => {}, onState: (s) => { if (s === "connecting") at.push(Date.now()); } },
+      { baseDelayMs: 40 },
+    );
+    client.connect();
+    await until("online", () => at.length === 1);
+
+    // Nothing to connect to from here on: every attempt is refused at once, so
+    // the gap between two attempts is the backoff plus a connect refusal.
+    await d.close();
+    await until("three retries", () => at.length >= 4);
+
+    const gaps = at.slice(1).map((t, i) => t - at[i]!);
+    // Exact ratio is 2; the floor is loose because the refusal overhead lands in
+    // the smaller gap and CI's timers are not a metronome. A fixed delay is 1.
+    for (let i = 1; i < gaps.length; i++) expect(gaps[i]!).toBeGreaterThan(gaps[i - 1]! * 1.5);
+
+    client.close();
+  });
+
+  it("ignores a message shape it does not know", async () => {
+    const d = await startDaemon(idle());
+    const { client, states, events } = connectTo(d);
+    await until("online", () => states.includes("online"));
+
+    // A daemon one version ahead adds a variant; the phone must skip it, not die
+    // on `m.event` being undefined.
+    (client as unknown as { receive(raw: unknown): void }).receive(JSON.stringify({ type: "hello.future" }));
+    expect(await client.request<SessionRow[]>("sessions.list")).toEqual([]);
+    expect(events).toEqual([]);
+
+    client.close();
+    await d.close();
+  });
+
   it("delivers pushed session events", async () => {
     const d = await startDaemon(idle());
     const { client, states, events } = connectTo(d);
