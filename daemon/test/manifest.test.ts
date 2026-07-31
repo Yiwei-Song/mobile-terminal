@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Manifest } from "../src/sessions/manifest.js";
@@ -46,6 +46,20 @@ describe("manifest", () => {
 
     // Normalization is written through, not just held in memory.
     expect(byId(new Manifest(dir).list())).toEqual({ run: "idle", wait: "idle", idle: "idle", dead: "dead" });
+  });
+
+  // A torn or hand-edited sessions.json must not brick the daemon: the
+  // constructor recovers to empty instead of throwing, and moves the bad file
+  // aside so the next flush starts clean.
+  it("recovers from corrupt sessions.json instead of throwing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "wb-"));
+    const file = join(dir, "sessions.json");
+    writeFileSync(file, "{bad json");
+
+    const m = new Manifest(dir);
+    expect(m.list()).toEqual([]);
+    expect(existsSync(`${file}.corrupt`)).toBe(true);
+    expect(readFileSync(`${file}.corrupt`, "utf8")).toBe("{bad json");
   });
 
   it("upsert replaces an existing session instead of duplicating it", () => {

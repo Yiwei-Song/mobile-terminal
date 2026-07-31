@@ -16,8 +16,15 @@ export class Manifest {
   constructor(dataDir: string) {
     this.file = join(dataDir, "sessions.json");
     if (existsSync(this.file)) {
-      for (const e of JSON.parse(readFileSync(this.file, "utf8")) as ManifestEntry[]) {
-        this.entries.set(e.sessionId, e);
+      try {
+        for (const e of JSON.parse(readFileSync(this.file, "utf8")) as ManifestEntry[]) {
+          this.entries.set(e.sessionId, e);
+        }
+      } catch {
+        // Torn or hand-edited file: don't brick the daemon. Move it aside and
+        // boot empty. renameSync overwrites any prior .corrupt on Windows and
+        // POSIX alike, so no clock-suffix (banned) or unlink dance is needed.
+        renameSync(this.file, `${this.file}.corrupt`);
       }
     }
   }
