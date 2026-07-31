@@ -52,7 +52,10 @@ export default function NewSession() {
     setStarting(true);
     try {
       const id = await newSession(cwd.trim(), prompt.trim());
-      await pushRecent(cwd.trim());
+      // Recents persistence must never gate navigation once the session exists —
+      // a throw here (quota / private mode / locked keystore) would show a false
+      // "Couldn't start" and leak a duplicate session on retry.
+      void pushRecent(cwd.trim()).catch(() => {});
       router.replace(`/session/${id}`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
