@@ -46,6 +46,10 @@ function turn(prompt: string, resume?: string) {
         log(e);
         if (e.kind === "session.text" && e.role === "assistant") said.push(e.text);
         if (e.kind === "session.done") settle(e.ok);
+        // The CLI can die mid-turn: `dead` arrives and no `done` ever will, so
+        // without this the turn would wait forever instead of failing. Harmless
+        // after a real done — the promise is already settled.
+        if (e.kind === "session.status" && e.status === "dead") settle(false);
       },
       // Every prompt here is tool-free by construction, so this should never
       // fire — but a stall waiting for an answer nobody gives is a worse
@@ -56,12 +60,18 @@ function turn(prompt: string, resume?: string) {
   // Ending the session is the last thing each turn does: without close() the
   // SDK sits waiting for more input and the process never exits.
   const finish = async (): Promise<string> => {
-    assert.ok(await ended, `turn failed: ${prompt}`);
-    session.close();
-    // A closed session's stream ends without a result, which `done` may reject
-    // on. Expected — the turn already passed.
-    await session.done.catch(() => {});
-    return said.join(" ");
+    try {
+      assert.ok(await ended, `turn failed: ${prompt}`);
+      return said.join(" ");
+    } finally {
+      // In a finally so a failed turn still reaps its CLI child instead of
+      // orphaning it.
+      session.close();
+      // A clean close resolves `done` (the pump falls through; failId no-ops on
+      // an already-settled id). It only rejects if the stream threw — which the
+      // turn has already been judged on either way.
+      await session.done.catch(() => {});
+    }
   };
   return { session, finish };
 }

@@ -22,7 +22,9 @@ const cwd = join(scratch, "cwd");
 const file = join(cwd, "hello.txt");
 // Not 8791: a daemon the user actually runs sits there, and the two would fight
 // over the port (or worse, this would drive the live one).
-const PORT = Number(process.env.WORKBENCH_E2E_PORT ?? 18791);
+// `||` not `??`: an empty or non-numeric env var should fall back, and `??`
+// would let "" through as 0.
+const PORT = Number(process.env.WORKBENCH_E2E_PORT) || 18791;
 
 const log = (s) => console.log(s);
 const fail = (s) => { log(`FAIL: ${s}`); done(1); };
