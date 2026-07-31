@@ -10,7 +10,7 @@ import {
   type NativeSyntheticEvent,
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
-import { ArrowDown, MessageSquare, StopCircle, WifiOff } from "lucide-react-native";
+import { ArrowDown, MessageSquare, ShieldAlert, StopCircle, WifiOff } from "lucide-react-native";
 
 import { ApprovalCard } from "../../src/components/ApprovalCard";
 import { BackButton } from "../../src/components/BackButton";
@@ -52,6 +52,9 @@ export default function SessionScreen() {
   const data = useMemo(() => [...items].reverse(), [items]);
   const status = session?.status;
   const offline = connState !== "online";
+  // After a 4001 the client HALTED reconnection, so "reconnecting…" is a lie and
+  // there is no path out but re-pairing. Split it from plain offline.
+  const unauthorized = connState === "unauthorized";
   const current = asks[0];
 
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => setJump(showJump(e.nativeEvent.contentOffset.y));
@@ -161,7 +164,7 @@ export default function SessionScreen() {
           />
         )}
 
-        {status === "dead" && (
+        {status === "dead" && !unauthorized && (
           <View style={styles.banner}>
             <Text variant="sub" color="textMut">
               Session ended — send a message to start it again.
@@ -169,10 +172,32 @@ export default function SessionScreen() {
           </View>
         )}
 
+        {unauthorized && (
+          <View style={[styles.banner, styles.repair]}>
+            <View style={styles.repairText}>
+              <ShieldAlert size={iconSize.sm} color={color.textMut} strokeWidth={stroke.icon} />
+              <Text variant="sub" color="textMut" style={styles.flex}>
+                This PC turned the phone away — re-pair to answer here again.
+              </Text>
+            </View>
+            <Button
+              label="Re-pair"
+              variant="outline"
+              onPress={() => router.push({ pathname: "/pair", params: { edit: "1" } })}
+            />
+          </View>
+        )}
+
         <Composer
           onSend={(text) => send(id, text)}
           disabled={offline}
-          hint={offline ? "Offline — reconnecting to your PC…" : undefined}
+          hint={
+            unauthorized
+              ? "This PC turned the phone away — re-pair to send."
+              : offline
+                ? "Offline — reconnecting to your PC…"
+                : undefined
+          }
         />
       </KeyboardAvoidingView>
     </Screen>
@@ -224,4 +249,6 @@ const styles = StyleSheet.create({
     borderWidth: stroke.hairline,
     borderColor: color.border,
   },
+  repair: { gap: space(2) },
+  repairText: { flexDirection: "row", alignItems: "center", gap: space(2) },
 });

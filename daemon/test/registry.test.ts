@@ -254,6 +254,49 @@ describe("Registry", () => {
     expect(events).toContainEqual({ kind: "session.text", sessionId: "s2", role: "user", text: "again" });
   });
 
+  it("re-delivers outstanding permissions via sessions.pending, and drops them once answered", async () => {
+    const { registry, events } = setup(({ options }: any) =>
+      (async function* () {
+        yield init;
+        void options.canUseTool("Bash", { command: "rm -rf /" }, toolOpts("req-1")).catch(() => {});
+        await new Promise<void>(() => {});
+      })(),
+    );
+
+    await registry.handle("sessions.new", { cwd: "C:\\proj", prompt: "hi" });
+    await until("permission pushed", () => events.some((e) => e.kind === "session.permission"));
+    // The full payload the phone first saw — everything the card needs to redraw
+    // after a reconnect that missed the one-shot push.
+    expect(await registry.handle("sessions.pending", {})).toEqual([
+      { kind: "session.permission", sessionId: "s1", requestId: "req-1", toolName: "Bash", summary: "Bash: rm -rf /", cwd: "C:\\proj" },
+    ]);
+
+    await registry.handle("sessions.approve", { sessionId: "s1", requestId: "req-1", allow: true });
+    expect(await registry.handle("sessions.pending", {})).toEqual([]);
+  });
+
+  it("drops a recovered permission from sessions.pending when the session dies", async () => {
+    let kill!: () => void;
+    const ended = new Promise<void>((r) => {
+      kill = r;
+    });
+    const { registry, manifest, events } = setup(({ options }: any) =>
+      (async function* () {
+        yield init;
+        void options.canUseTool("Bash", { command: "a" }, toolOpts("req-9")).catch(() => {});
+        await ended;
+      })(),
+    );
+    await registry.handle("sessions.new", { cwd: "C:\\proj", prompt: "hi" });
+    await until("permission pushed", () => events.some((e) => e.kind === "session.permission"));
+    expect((await registry.handle("sessions.pending", {}) as unknown[])).toHaveLength(1);
+
+    kill();
+    await until("session dead", () => manifest.list()[0]?.status === "dead");
+    // The teardown sweep denied it; it must also leave the recoverable set.
+    expect(await registry.handle("sessions.pending", {})).toEqual([]);
+  });
+
   it("fails a permission left outstanding when the session dies", async () => {
     let permissionResult: any;
     const { registry, events } = setup(({ options }: any) =>

@@ -133,6 +133,12 @@ export const useWorkbench = create<Workbench>((set, get) => ({
       // Trust the server's order: the manifest already sorts attention-first.
       const req = client.request<SessionRow[]>("sessions.list");
       set({ sessions: await (userInitiated === true ? track(req) : req) });
+      // A permission is pushed once, at fire time. A phone that was disconnected
+      // then (notification → open app later → reconnect) never saw that push, so
+      // ask for the outstanding set — this is what makes the card reappear. The
+      // daemon is authoritative, so replace rather than append.
+      const pending = await client.request<Approval[]>("sessions.pending");
+      set({ pendingApprovals: bySession(pending) });
     } finally {
       refreshing = false;
     }
@@ -193,15 +199,16 @@ export const useWorkbench = create<Workbench>((set, get) => ({
       case "session.done":
         set({ transcripts: append(state.transcripts, e.sessionId, { id: nextId(), kind: "done", ok: e.ok, costUsd: e.costUsd }) });
         return;
-      case "session.permission":
+      case "session.permission": {
         // One card per outstanding request: Claude asks for several tools at
         // once and a single slot would drop all but the last.
-        set({
-          pendingApprovals: {
-            ...state.pendingApprovals,
-            [e.sessionId]: [...(state.pendingApprovals[e.sessionId] ?? []), e],
-          },
-        });
+        const asks = state.pendingApprovals[e.sessionId] ?? [];
+        // Idempotent: a buffered permission replayed after a refresh already
+        // pulled it in via sessions.pending must not double the card.
+        if (asks.some((a) => a.requestId === e.requestId)) return;
+        set({ pendingApprovals: { ...state.pendingApprovals, [e.sessionId]: [...asks, e] } });
+        return;
+      }
     }
   },
 
@@ -209,7 +216,11 @@ export const useWorkbench = create<Workbench>((set, get) => ({
     // Empty title means "use the prompt's first line", which the daemon does for
     // an absent field. JSON has no undefined, so `null` would fail its validator.
     const r = await track(must().request<{ sessionId: string }>("sessions.new", { cwd, prompt, title: title || undefined }));
-    await get().refreshSessions();
+    // The session already exists on the daemon; a refresh that rejects here
+    // (offline blip) must not fail newSession and send the user back to retry —
+    // that starts a SECOND real session. Buffering covers the event gap until
+    // the next refresh lands.
+    await get().refreshSessions().catch(() => {});
     return r.sessionId;
   },
 
@@ -222,9 +233,11 @@ export const useWorkbench = create<Workbench>((set, get) => ({
   },
 
   async approve(sessionId, requestId, allow) {
-    // Drop the card first: the thumb has answered, and a failed request leaves
-    // the session's next status event to tell the truth.
-    const list = (get().pendingApprovals[sessionId] ?? []).filter((a) => a.requestId !== requestId);
+    // Drop the card first: the thumb has answered, and the UI should not wait a
+    // round-trip to acknowledge it.
+    const asks = get().pendingApprovals[sessionId] ?? [];
+    const answered = asks.find((a) => a.requestId === requestId);
+    const list = asks.filter((a) => a.requestId !== requestId);
     // Last card answered drops the key, not an empty array: `in` and Object.keys
     // are how a screen asks whether a session is waiting on the user.
     set({
@@ -233,13 +246,34 @@ export const useWorkbench = create<Workbench>((set, get) => ({
           ? { ...get().pendingApprovals, [sessionId]: list }
           : without(get().pendingApprovals, sessionId),
     });
-    await track(must().request("sessions.approve", { sessionId, requestId, allow }));
+    try {
+      await track(must().request("sessions.approve", { sessionId, requestId, allow }));
+    } catch (e) {
+      // The request never reached the daemon, which is still blocking canUseTool.
+      // A dropped card here dead-ends the session, so put it back for the thumb
+      // to answer again (lastError already carries the why). The pending-recovery
+      // on the next refresh heals it too; this is the immediate correct behavior.
+      if (answered !== undefined) {
+        const now = get().pendingApprovals[sessionId] ?? [];
+        if (!now.some((a) => a.requestId === requestId))
+          set({ pendingApprovals: { ...get().pendingApprovals, [sessionId]: [...now, answered] } });
+      }
+      throw e;
+    }
   },
 
   async setNtfyTopic(topic) {
     set({ machine: await track(must().request<ConfigInfo>("config.set", { ntfyTopic: topic })) });
   },
 }));
+
+// sessions.pending returns one flat list across all sessions; the store keys
+// approvals by session.
+const bySession = (approvals: Approval[]): Record<string, Approval[]> => {
+  const out: Record<string, Approval[]> = {};
+  for (const a of approvals) (out[a.sessionId] ??= []).push(a);
+  return out;
+};
 
 const onlyKnown = <T>(map: Record<string, T | undefined>, known: Set<string>): Record<string, T | undefined> =>
   Object.fromEntries(Object.entries(map).filter(([id]) => known.has(id)));

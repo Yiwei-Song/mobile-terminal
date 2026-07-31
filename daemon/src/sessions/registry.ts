@@ -1,5 +1,5 @@
 import { hostname } from "node:os";
-import type { ConfigInfo, SessionEvent } from "../protocol.js";
+import type { ConfigInfo, PermissionEvent, SessionEvent } from "../protocol.js";
 import { setNtfyTopic, type Config } from "../config.js";
 import { VERSION } from "../version.js";
 import { ClaudeSession, type ClaudeDeps } from "./claude.js";
@@ -14,8 +14,10 @@ export class Registry {
   // can hand out the same requestId, so the bare id would let the second prompt
   // overwrite the first's resolver — and let an approve answer the wrong session.
   // The session is kept alongside so a dying one can settle its own outstanding
-  // prompts without touching anyone else's.
-  private readonly pending = new Map<string, { session: ClaudeSession; resolve: (allow: boolean) => void }>();
+  // prompts without touching anyone else's. The event is the full payload the
+  // phone first saw — kept so sessions.pending can re-deliver it after a
+  // reconnect, since the push only fires once.
+  private readonly pending = new Map<string, { session: ClaudeSession; event: PermissionEvent; resolve: (allow: boolean) => void }>();
 
   constructor(
     private readonly deps: ClaudeDeps,
@@ -88,6 +90,11 @@ export class Registry {
         return {};
       }
 
+      case "sessions.pending":
+        // The push that carried these fired once. A phone that reconnects (or
+        // reopens from a notification) asks here so the approval card reappears.
+        return [...this.pending.values()].map((p) => p.event);
+
       default:
         throw new Error(`unknown method: ${method}`);
     }
@@ -145,7 +152,11 @@ export class Registry {
       // after the CLI reported its id (or was resumed under a known one).
       askPermission: async (req) =>
         new Promise<boolean>((resolve) =>
-          this.pending.set(`${entry.sessionId}:${req.requestId}`, { session, resolve }),
+          this.pending.set(`${entry.sessionId}:${req.requestId}`, {
+            session,
+            event: { kind: "session.permission", sessionId: entry.sessionId, ...req },
+            resolve,
+          }),
         ),
     });
     // On resume the id is known up front, so claim it now — a concurrent send

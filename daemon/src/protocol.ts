@@ -8,6 +8,7 @@ export type ClientMsg =
   | { type: "req"; id: string; method: "sessions.send"; params: { sessionId: string; text: string } }
   | { type: "req"; id: string; method: "sessions.interrupt"; params: { sessionId: string } }
   | { type: "req"; id: string; method: "sessions.approve"; params: { sessionId: string; requestId: string; allow: boolean } }
+  | { type: "req"; id: string; method: "sessions.pending" }
   | { type: "req"; id: string; method: "config.get" }
   | { type: "req"; id: string; method: "config.set"; params: { ntfyTopic: string | null } };
 
@@ -42,8 +43,13 @@ export type SessionEvent =
   | { kind: "session.status"; sessionId: string; status: SessionStatus; title: string }
   | { kind: "session.text"; sessionId: string; role: "assistant" | "user"; text: string }
   | { kind: "session.tool"; sessionId: string; name: string; summary: string }
-  | { kind: "session.permission"; sessionId: string; requestId: string; toolName: string; summary: string; cwd: string }
+  | PermissionEvent
   | { kind: "session.done"; sessionId: string; ok: boolean; costUsd: number | null };
+
+// The one event that outlives its push: fired once, but a phone that was away
+// recovers it via sessions.pending. Named so both the daemon's recoverable set
+// and that RPC's return share a shape.
+export type PermissionEvent = { kind: "session.permission"; sessionId: string; requestId: string; toolName: string; summary: string; cwd: string };
 
 const str = (v: unknown): boolean => typeof v === "string";
 
@@ -57,6 +63,7 @@ const METHODS = new Map<string, (p: any) => boolean>([
   ["sessions.send", (p) => str(p?.sessionId) && str(p?.text)],
   ["sessions.interrupt", (p) => str(p?.sessionId)],
   ["sessions.approve", (p) => str(p?.sessionId) && str(p?.requestId) && typeof p?.allow === "boolean"],
+  ["sessions.pending", () => true],
   ["config.get", () => true],
   // Explicit null clears the topic; an absent key is a malformed request, not
   // a silent "leave it alone" — the ClientMsg type promises the field is there.

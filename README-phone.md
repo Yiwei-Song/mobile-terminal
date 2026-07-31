@@ -33,8 +33,11 @@ The app isn't on the Play Store yet, so you run it through **Expo Go** (Expo's d
 2. On the PC, in a **second** terminal:
    ```
    cd app
+   npm install
    npx expo start
    ```
+   > First run only. The app imports from `daemon/`, so make sure step 1's
+   > `cd daemon && npm install` ran too — a clean checkout needs both.
 3. Scan the **Metro QR** (the one `expo start` prints) with **Expo Go**. This loads the app
    onto your phone.
 4. Now inside the app, scan the **daemon QR** (the one `npm run dev` printed in step 1) — or

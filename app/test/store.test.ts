@@ -120,6 +120,55 @@ describe("workbench store", () => {
     await d.close();
   });
 
+  it("repopulates a pending approval after a reconnect that missed the push", async () => {
+    const { query } = asksOnce();
+    const d = await startDaemon(query);
+    await online(d.url, d.token);
+
+    const id = await state().newSession("C:\\proj", "do the thing");
+    await until("approval raised", () => (state().pendingApprovals[id] ?? []).length === 1);
+    const before = state().pendingApprovals[id]![0]!;
+
+    // The phone drops the socket while the daemon still blocks on canUseTool —
+    // the notification-then-reopen case. The daemon keeps running on the same port.
+    state().disconnect();
+    await until("offline after drop", () => state().connState === "offline");
+    expect(state().pendingApprovals).toEqual({});
+
+    // Reopen: refreshSessions runs on reconnect and now also pulls sessions.pending.
+    await online(d.url, d.token);
+    await until("card recovered", () => (state().pendingApprovals[id] ?? []).length === 1);
+    const after = state().pendingApprovals[id]![0]!;
+    // Same card, intact — everything ApprovalCard needs to redraw.
+    expect(after).toEqual(before);
+    expect(after).toMatchObject({ toolName: "Bash", summary: "Bash: ls", cwd: "C:\\proj" });
+
+    // And it still answers the SDK, so the round trip is genuinely healed.
+    await state().approve(id, after.requestId, true);
+    await until("SDK answered", () => (state().transcripts[id] ?? []).some((i) => i.kind === "done"));
+
+    await d.close();
+  });
+
+  it("restores the approval when the approve request fails", async () => {
+    const { query } = asksOnce();
+    const d = await startDaemon(query);
+    await online(d.url, d.token);
+
+    const id = await state().newSession("C:\\proj", "do the thing");
+    await until("approval raised", () => (state().pendingApprovals[id] ?? []).length === 1);
+    const ask = state().pendingApprovals[id]![0]!;
+
+    // Kill the connection the instant before answering: the request rejects.
+    await d.close();
+    await until("offline", () => state().connState === "offline");
+    await expect(state().approve(id, ask.requestId, true)).rejects.toThrow();
+
+    // The daemon is still waiting; the card must come back rather than dead-end.
+    expect(state().pendingApprovals[id]).toEqual([ask]);
+    expect(state().lastError).toBeTruthy();
+  });
+
   it("re-sorts attention-first when a status event arrives", async () => {
     let ask!: () => void;
     const asked = new Promise<void>((r) => {

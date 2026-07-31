@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { router } from "expo-router";
-import { Play, Wifi } from "lucide-react-native";
+import { Play, ShieldAlert, Wifi } from "lucide-react-native";
 
 import { BackButton } from "../src/components/BackButton";
 import { Button } from "../src/components/Button";
@@ -48,6 +48,9 @@ export default function NewSession() {
   }, []);
 
   const offline = connState !== "online";
+  // A 4001 halted reconnection, so "Reconnect" would spin forever — the only way
+  // out is re-pairing to pick up the daemon's new token.
+  const unauthorized = connState === "unauthorized";
   const canStart = cwd.trim() !== "" && prompt.trim() !== "" && !offline;
 
   // Same "try now" the Home screen offers: connect() on the pairing we are
@@ -140,7 +143,15 @@ export default function NewSession() {
         </ScrollView>
 
         <View style={styles.footer}>
-          {offline ? (
+          {unauthorized ? (
+            <Button
+              label="Re-pair to start a session"
+              variant="outline"
+              icon={ShieldAlert}
+              fill
+              onPress={() => router.push({ pathname: "/pair", params: { edit: "1" } })}
+            />
+          ) : offline ? (
             <Button label="Reconnect to start a session" variant="outline" icon={Wifi} fill onPress={retry} />
           ) : (
             <Button label="Start session" icon={Play} fill loading={starting} disabled={!canStart} onPress={() => void start()} />
