@@ -38,6 +38,9 @@ export interface Workbench {
   send(sessionId: string, text: string): Promise<void>;
   interrupt(sessionId: string): Promise<void>;
   approve(sessionId: string, requestId: string, allow: boolean): Promise<void>;
+  // config.set answers with the whole ConfigInfo, so the settings screen never
+  // has to guess what it saved — `machine` is the read-back.
+  setNtfyTopic(topic: string | null): Promise<void>;
 }
 
 // Same order the daemon's manifest sorts by: what needs the user first, dead last.
@@ -216,6 +219,10 @@ export const useWorkbench = create<Workbench>((set, get) => ({
           : without(get().pendingApprovals, sessionId),
     });
     await track(must().request("sessions.approve", { sessionId, requestId, allow }));
+  },
+
+  async setNtfyTopic(topic) {
+    set({ machine: await track(must().request<ConfigInfo>("config.set", { ntfyTopic: topic })) });
   },
 }));
 

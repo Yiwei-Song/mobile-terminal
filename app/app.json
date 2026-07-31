@@ -30,6 +30,14 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }
+      ],
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Workbench uses the camera once, to read the pairing QR code your daemon prints.",
+          "recordAudioAndroid": false
+        }
       ]
     ],
     "experiments": {
