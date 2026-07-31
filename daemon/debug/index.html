@@ -66,8 +66,10 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-let ws = null, seq = 0, sel = null;
+let ws = null, seq = 0, sel = null, pendingNew = false;
 const pending = new Map();
+// Events seen while a sessions.new is in flight, replayed once its id arrives.
+const buffered = [];
 
 const status = (s) => { $("status").textContent = s; };
 
@@ -79,8 +81,10 @@ function rpc(method, params) {
     ws.send(JSON.stringify({ type: "req", id, method, params }));
   });
 }
-// Every call is fire-and-forget from a thumb; a failure belongs in the status line.
-const call = (m, p) => rpc(m, p).catch((e) => { status(e.message); throw e; });
+// Every call is fire-and-forget from a thumb; a failure belongs in the status
+// line and nowhere else. Resolves to undefined on failure — rethrowing only
+// bought an unhandled rejection, so the callers that read a result check it.
+const call = (m, p) => rpc(m, p).catch((e) => { status(e.message); });
 
 function connect() {
   const token = $("token").value.trim();
@@ -88,7 +92,15 @@ function connect() {
   if (ws) ws.close();
   ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
   ws.onopen = () => ws.send(JSON.stringify({ type: "auth", token }));
-  ws.onclose = (e) => status(`disconnected (${e.code}${e.reason ? " " + e.reason : ""})`);
+  ws.onclose = (e) => {
+    // Same text into the status line and into every in-flight call, so a
+    // settling rejection cannot overwrite the line with a vaguer message.
+    const why = `disconnected (${e.code}${e.reason ? " " + e.reason : ""})`;
+    status(why);
+    // Nothing will ever answer these; left pending they hang their awaiters forever.
+    for (const p of pending.values()) p.rej(new Error(why));
+    pending.clear();
+  };
   ws.onerror = () => status("connection error");
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
@@ -112,7 +124,15 @@ function onEvent(e) {
   // daemon already sorts needs-attention first, so a re-fetch is the whole job.
   if (e.kind === "session.status" || e.kind === "session.done") refresh();
   if (e.kind === "session.permission") ask(e);
-  if (e.sessionId !== sel) return;
+  if (e.sessionId === sel) return show(e);
+  // A new session's id only exists once the CLI reports it, and sessions.new
+  // resolves on that — so its first events reach us while `sel` is still the
+  // old session. Hold anything unrecognised until the id lands, or the opening
+  // lines of every new session are lost.
+  if (pendingNew) buffered.push(e);
+}
+
+function show(e) {
   if (e.kind === "session.text") line(e.role, e.text);
   if (e.kind === "session.tool") line("tool", e.summary);
   if (e.kind === "session.done") line("done", `ok=${e.ok} cost=${e.costUsd ?? "?"}`);
@@ -154,6 +174,7 @@ function ask(e) {
 
 async function refresh() {
   const list = await call("sessions.list");
+  if (!list) return; // call() reports the failure; a stale list beats an empty one
   const box = $("sessions");
   box.textContent = "";
   for (const s of list) {
@@ -177,9 +198,26 @@ function select(id) {
 $("connect").onclick = connect;
 $("new").onsubmit = async (ev) => {
   ev.preventDefault();
-  const r = await call("sessions.new", { cwd: $("cwd").value.trim(), prompt: $("prompt").value });
+  // Clear once, up front — select() would clear again after the id arrives and
+  // wipe exactly the lines this buffering exists to keep.
+  sel = null;
+  $("transcript").textContent = "";
+  buffered.length = 0;
+  pendingNew = true;
+  let r;
+  try {
+    r = await call("sessions.new", { cwd: $("cwd").value.trim(), prompt: $("prompt").value });
+  } finally {
+    pendingNew = false;
+  }
+  // call() already put the error in the status line; nothing to select.
+  if (!r) { buffered.length = 0; return; }
   $("prompt").value = "";
-  select(r.sessionId);
+  sel = r.sessionId;
+  // Other sessions may have been talking too; only ours belongs in this pane.
+  for (const e of buffered) if (e.sessionId === sel) show(e);
+  buffered.length = 0;
+  refresh();
 };
 $("send").onclick = () => {
   if (!sel) return status("no session selected");

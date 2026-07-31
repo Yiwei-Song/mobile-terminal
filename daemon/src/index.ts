@@ -21,19 +21,38 @@ const registry = new Registry({ query }, manifest, (e) => {
   pushRef(e);
   // The two moments worth waking a phone for: a blocked session, and a finished one.
   if (e.kind === "session.permission") notify(cfg.ntfyTopic, "Approval needed", e.summary);
-  if (e.kind === "session.done") notify(cfg.ntfyTopic, "Session finished", e.sessionId);
+  // A raw uuid on a lock screen says nothing about which session finished; the
+  // manifest already holds the title the list shows, so read it back from there.
+  if (e.kind === "session.done") {
+    const title = manifest.list().find((s) => s.sessionId === e.sessionId)?.title;
+    notify(cfg.ntfyTopic, "Session finished", title || e.sessionId);
+  }
 });
 
 const srv = await startServer(cfg, (method, params, push) => {
   pushRef = push;
   return registry.handle(method, params);
+}).catch((e: any) => {
+  // Port already in use is the everyday case (a second daemon). One line, not a stack.
+  console.error(`Failed to start: ${e?.message ?? e}`);
+  return process.exit(1);
 });
 
-// First non-internal IPv4 — the address the phone on the same wifi can reach.
-const ip =
-  Object.values(networkInterfaces())
-    .flat()
-    .find((i) => i && !i.internal && i.family === "IPv4")?.address ?? "127.0.0.1";
+// The address the phone on the same wifi can reach. "First non-internal IPv4"
+// is wrong on Windows: WSL and Hyper-V vEthernet adapters are non-internal and
+// usually enumerate first, so the QR would encode a host nothing can route to.
+// Prefer the ranges a home router hands out; print every candidate so a bad
+// pick is diagnosable in one glance.
+const rank = (a: string): number => (a.startsWith("192.168.") ? 0 : a.startsWith("10.") ? 1 : 2);
+const candidates = Object.entries(networkInterfaces())
+  .flatMap(([name, addrs]) =>
+    (addrs ?? []).filter((a) => !a.internal && a.family === "IPv4").map((a) => ({ name, address: a.address })),
+  )
+  // Stable sort: same-rank addresses keep OS enumeration order.
+  .sort((a, b) => rank(a.address) - rank(b.address));
+const ip = candidates[0]?.address ?? "127.0.0.1";
+
+console.log(`LAN candidates (best first): ${candidates.map((c) => `${c.name}=${c.address}`).join("  ") || "(none)"}`);
 
 console.log(`Workbench daemon on ws://${ip}:${srv.port}/ws  (debug page: http://${ip}:${srv.port}/)`);
 console.log("Scan to pair:");

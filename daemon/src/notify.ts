@@ -3,5 +3,11 @@
 export function notify(topic: string | null, title: string, body: string): void {
   if (!topic) return;
   // Never awaited and never rethrown: a flaky push must not fail a session.
-  fetch(`https://ntfy.sh/${topic}`, { method: "POST", body, headers: { Title: title } }).catch(() => {});
+  // Encoded: a topic is user-typed config and a stray space or `#` would either
+  // break the URL or silently post to a different topic than the one configured.
+  fetch(`https://ntfy.sh/${encodeURIComponent(topic)}`, {
+    method: "POST",
+    body,
+    headers: { Title: title },
+  }).catch(() => {});
 }
