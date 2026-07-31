@@ -1,17 +1,9 @@
-// Machine metrics for the mobile System screen. `systeminformation` is injected
-// (deps.si) so unit tests use a fake and never touch real hardware.
-export interface Metrics {
-  cpuPct: number; // 0-100 overall
-  mem: { usedGb: number; totalGb: number; pct: number };
-  disks: { mount: string; usedGb: number; totalGb: number; pct: number }[];
-  uptimeSec: number;
-}
-export interface Proc {
-  pid: number;
-  name: string;
-  cpuPct: number;
-  memMb: number;
-}
+// Metrics/Proc live in protocol.ts (the wire shapes the app re-exports); import
+// them back here so this module still owns the mapping that produces them.
+// `systeminformation` is injected (deps.si) so unit tests use a fake and never
+// touch real hardware.
+import type { Metrics, Proc } from "./protocol.js";
+export type { Metrics, Proc };
 export interface SystemDeps {
   si: typeof import("systeminformation");
 }

@@ -2,13 +2,13 @@ import { describe, it, expect } from "vitest";
 
 import { WorkbenchClient, type ConnState } from "../src/lib/client";
 import { startDaemon, until, idle, type FakeQuery, type Daemon } from "./harness";
-import type { SessionEvent, SessionRow } from "@shared/protocol";
+import type { PushEvent, SessionRow } from "@shared/protocol";
 
 // Every test here talks to a real in-process daemon over a real WebSocket.
 
 const connectTo = (d: Daemon, opts?: { baseDelayMs?: number }) => {
   const states: ConnState[] = [];
-  const events: SessionEvent[] = [];
+  const events: PushEvent[] = [];
   const client = new WorkbenchClient(
     d.url,
     d.token,

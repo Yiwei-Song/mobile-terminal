@@ -1,11 +1,13 @@
-import type { ServerMsg, SessionEvent } from "@shared/protocol";
+import type { PushEvent, ServerMsg } from "@shared/protocol";
 
 // "unauthorized" is terminal: the daemon rejected the token, so the pairing
 // screen has to get involved. Every other state is on its way somewhere.
 export type ConnState = "connecting" | "online" | "offline" | "unauthorized";
 
 export interface ClientHandlers {
-  onEvent(e: SessionEvent): void;
+  // The whole event channel — session events plus machine.reboot. The store's
+  // applyEvent decides what each kind does; the client no longer drops any.
+  onEvent(e: PushEvent): void;
   // lastSeen is the epoch ms of the last frame the daemon sent us — the only
   // honest thing to show next to an offline banner. Absent until first contact.
   onState(s: ConnState, lastSeen?: number): void;
@@ -148,12 +150,9 @@ export class WorkbenchClient {
       if (m.ok) p.resolve(m.data);
       else p.reject(new Error(m.error));
     } else if (m.type === "event") {
-      // The wire also carries machine events (machine.reboot); the store is
-      // session-only with no reboot UI in this plan, so they're dropped here at
-      // the one place wire data becomes typed. Excluding the sole MachineEvent
-      // kind narrows to SessionEvent — add a second machine kind and this line
-      // stops compiling, which is the reminder to decide what the app does with it.
-      if (m.event.kind !== "machine.reboot") this.handlers.onEvent(m.event);
+      // Both session events and machine.reboot go through untouched — the store
+      // owns the reboot countdown now, so the boundary no longer filters kinds.
+      this.handlers.onEvent(m.event);
     }
   }
 

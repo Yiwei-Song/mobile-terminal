@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ConfigInfo, SessionEvent, SessionRow, SessionStatus } from "@shared/protocol";
+import type { ConfigInfo, Metrics, Proc, PushEvent, SessionEvent, SessionRow, SessionStatus } from "@shared/protocol";
 
 import { WorkbenchClient, type ClientOpts, type ConnState } from "./client";
 
@@ -23,6 +23,16 @@ export interface Workbench {
   // config.get's answer: hostname + version are what the header shows, and the
   // ntfy topic it also carries is what the settings screen will need.
   machine: ConfigInfo | null;
+  // The System screen's live snapshot. Null until the first refresh; the screen
+  // drives the ~3s interval — the store never owns a timer.
+  metrics: Metrics | null;
+  processes: Proc[];
+  // power.state's answer: the keep-awake hold and eco flag the toggle reflects.
+  powerState: { keepAwake: boolean; ecoMode: boolean } | null;
+  // Set by the machine.reboot push once a reboot is scheduled: the screen shows a
+  // countdown with an Abort while this is non-null. Cleared by abortReboot or a
+  // fresh connect — a reboot means the PC is about to drop off anyway.
+  rebootPending: { delaySec: number } | null;
   // Why the last thing the user asked for did not happen. Cleared by the next
   // one that does: a failed action is state, not a silent no-op.
   lastError: string | null;
@@ -33,7 +43,17 @@ export interface Workbench {
   // banner. The automatic re-list on every reconnect fails all the time by
   // design and reporting it would make the screen shout at a walk out of range.
   refreshSessions(userInitiated?: boolean): Promise<void>;
-  applyEvent(e: SessionEvent): void;
+  applyEvent(e: PushEvent): void;
+  // Screen-driven polling read (metrics + processes together). Not tracked: a
+  // blip on the 3s tick must not flash a banner — same reasoning as the
+  // automatic re-list.
+  refreshMetrics(): Promise<void>;
+  killProcess(pid: number): Promise<{ ok: boolean; error?: string }>;
+  refreshPowerState(): Promise<void>;
+  setKeepAwake(on: boolean): Promise<void>;
+  lockMachine(): Promise<void>;
+  rebootMachine(delaySec: number): Promise<void>;
+  abortReboot(): Promise<void>;
   newSession(cwd: string, prompt: string, title?: string): Promise<string>;
   send(sessionId: string, text: string): Promise<void>;
   interrupt(sessionId: string): Promise<void>;
@@ -42,6 +62,9 @@ export interface Workbench {
   // has to guess what it saved — `machine` is the read-back.
   setNtfyTopic(topic: string | null): Promise<void>;
 }
+
+// power.state and power.keepAwake both answer with this shape.
+type PowerState = { keepAwake: boolean; ecoMode: boolean };
 
 // Same order the daemon's manifest sorts by: what needs the user first, dead last.
 const ORDER: SessionStatus[] = ["waiting_on_user", "running", "idle", "dead"];
@@ -82,6 +105,10 @@ export const useWorkbench = create<Workbench>((set, get) => ({
   connState: "offline",
   lastSeen: undefined,
   machine: null,
+  metrics: null,
+  processes: [],
+  powerState: null,
+  rebootPending: null,
   lastError: null,
 
   connect(url, token, opts) {
@@ -103,6 +130,10 @@ export const useWorkbench = create<Workbench>((set, get) => ({
         onState: (connState, lastSeen) => {
           set({ connState, lastSeen });
           if (connState !== "online") return;
+          // Back online = the reboot (if any) happened and the PC returned, so a
+          // still-set countdown is stale. Clearing here is the "cleared on a
+          // subsequent connect" half of rebootPending's lifecycle.
+          set({ rebootPending: null });
           // There is no "session removed" event, so the list is only ever truth
           // at (re)connect time — re-list on every online, not just the first.
           void get().refreshSessions().catch(() => {});
@@ -123,7 +154,18 @@ export const useWorkbench = create<Workbench>((set, get) => ({
     wired = null;
     buffered = [];
     refreshing = false;
-    set({ sessions: [], transcripts: {}, pendingApprovals: {}, connState: "offline", machine: null, lastError: null });
+    set({
+      sessions: [],
+      transcripts: {},
+      pendingApprovals: {},
+      connState: "offline",
+      machine: null,
+      metrics: null,
+      processes: [],
+      powerState: null,
+      rebootPending: null,
+      lastError: null,
+    });
   },
 
   async refreshSessions(userInitiated) {
@@ -158,6 +200,14 @@ export const useWorkbench = create<Workbench>((set, get) => ({
   },
 
   applyEvent(e) {
+    // Not a session event — it has no sessionId, so it must be handled before the
+    // per-session bookkeeping below (which would otherwise buffer it forever under
+    // an id no list will ever have). The PC is about to reboot; the screen shows a
+    // countdown then the socket drops on its own.
+    if (e.kind === "machine.reboot") {
+      set({ rebootPending: { delaySec: e.delaySec } });
+      return;
+    }
     // A session that died before the CLI reported an id: there is no row to file
     // this under and never will be.
     if (e.sessionId === "") return;
@@ -264,6 +314,51 @@ export const useWorkbench = create<Workbench>((set, get) => ({
 
   async setNtfyTopic(topic) {
     set({ machine: await track(must().request<ConfigInfo>("config.set", { ntfyTopic: topic })) });
+  },
+
+  async refreshMetrics() {
+    if (client === null) return;
+    // One round of both reads; the screen's interval calls this every ~3s. Not
+    // wrapped in track — a missed tick is not worth a banner.
+    const [metrics, processes] = await Promise.all([
+      client.request<Metrics>("system.metrics"),
+      client.request<Proc[]>("system.processes"),
+    ]);
+    set({ metrics, processes });
+  },
+
+  async killProcess(pid) {
+    // The RPC answers {ok,error?}: a refused/failed kill is data the screen shows,
+    // not a thrown RPC error. track still catches a genuine transport failure.
+    const r = await track(must().request<{ ok: boolean; error?: string }>("system.kill", { pid }));
+    // Only a real kill changes the list; a refusal leaves it as-is.
+    if (r.ok) await get().refreshMetrics().catch(() => {});
+    return r;
+  },
+
+  async refreshPowerState() {
+    if (client === null) return;
+    set({ powerState: await client.request<PowerState>("power.state") });
+  },
+
+  async setKeepAwake(on) {
+    // The RPC answers with the new state, so the toggle reads back what took.
+    set({ powerState: await track(must().request<PowerState>("power.keepAwake", { on })) });
+  },
+
+  async lockMachine() {
+    await track(must().request("power.lock"));
+  },
+
+  async rebootMachine(delaySec) {
+    // The machine.reboot push (applyEvent) is what sets rebootPending — only after
+    // the daemon confirms the shutdown was actually scheduled.
+    await track(must().request("power.reboot", { delaySec }));
+  },
+
+  async abortReboot() {
+    await track(must().request("power.abortReboot"));
+    set({ rebootPending: null });
   },
 }));
 

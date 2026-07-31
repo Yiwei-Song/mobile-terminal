@@ -15,5 +15,7 @@ export type {
   SessionEvent,
   SessionRow,
   MachineEvent,
+  Metrics,
+  Proc,
   PushEvent,
 } from "../daemon/src/protocol";

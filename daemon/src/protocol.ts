@@ -39,6 +39,23 @@ export interface SessionRow {
   updatedAt: string; // ISO
 }
 
+// Machine metrics for the mobile System screen. Defined here (not in system.ts)
+// because system.ts type-imports `systeminformation`, and the app re-exports the
+// wire protocol through shared/ — pulling that hardware dep into the phone's type
+// graph would break its build. system.ts imports these back from here.
+export interface Metrics {
+  cpuPct: number; // 0-100 overall
+  mem: { usedGb: number; totalGb: number; pct: number };
+  disks: { mount: string; usedGb: number; totalGb: number; pct: number }[];
+  uptimeSec: number;
+}
+export interface Proc {
+  pid: number;
+  name: string;
+  cpuPct: number;
+  memMb: number;
+}
+
 // The reply to both config.get and config.set — a set answers with the state it
 // produced, so the phone never has to ask twice.
 export interface ConfigInfo {
