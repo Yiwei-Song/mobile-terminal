@@ -110,6 +110,7 @@ describe("server", () => {
     const onA = next(a);
     a.send(JSON.stringify({ type: "req", id: "1", method: "sessions.interrupt", params: { sessionId: "s1" } }));
     expect(await onA).toEqual({ type: "event", event: { kind: "session.done", sessionId: "s1", ok: true, costUsd: null } });
+    await new Promise((r) => setTimeout(r, 20)); // a leaked frame to the lurker needs a turn to land
     expect(lurkerMsgs).toBe(0);
 
     a.close(); lurker.close();
