@@ -7,8 +7,11 @@ type StatusEvent = Extract<SessionEvent, { kind: "session.status" }>;
 // Wires the WS methods to running CLI processes and the on-disk manifest.
 export class Registry {
   private readonly live = new Map<string, ClaudeSession>();
-  // Keyed by the SDK's requestId. The session is kept alongside so a dying one
-  // can settle its own outstanding prompts without touching anyone else's.
+  // Keyed by `${sessionId}:${requestId}`: two sessions are two CLI processes and
+  // can hand out the same requestId, so the bare id would let the second prompt
+  // overwrite the first's resolver — and let an approve answer the wrong session.
+  // The session is kept alongside so a dying one can settle its own outstanding
+  // prompts without touching anyone else's.
   private readonly pending = new Map<string, { session: ClaudeSession; resolve: (allow: boolean) => void }>();
 
   constructor(
@@ -54,11 +57,15 @@ export class Registry {
 
       case "sessions.approve": {
         if (!this.live.has(params.sessionId)) this.entry(params.sessionId);
-        const p = this.pending.get(params.requestId);
-        this.pending.delete(params.requestId);
+        // The composite key is what binds the answer to the session that asked:
+        // a requestId from another session simply does not match.
+        const key = `${params.sessionId}:${params.requestId}`;
+        const p = this.pending.get(key);
+        this.pending.delete(key);
         // ponytail: a duplicate or late approve (phone retried, session already
         // gone) has nothing to resolve and is not worth an error.
-        p?.resolve(params.allow);
+        // `=== true`: anything else off the wire denies rather than approving.
+        p?.resolve(params.allow === true);
         return {};
       }
 
@@ -98,8 +105,12 @@ export class Registry {
       },
       // Async, not a sync closure: a throw here would escape the adapter's
       // .catch on the permission promise and reach the SDK.
+      // `entry.sessionId` is already resolved here: a permission can only fire
+      // after the CLI reported its id (or was resumed under a known one).
       askPermission: async (req) =>
-        new Promise<boolean>((resolve) => this.pending.set(req.requestId, { session, resolve })),
+        new Promise<boolean>((resolve) =>
+          this.pending.set(`${entry.sessionId}:${req.requestId}`, { session, resolve }),
+        ),
     });
     // On resume the id is known up front, so claim it now — a concurrent send
     // must not start a second CLI for the same session.

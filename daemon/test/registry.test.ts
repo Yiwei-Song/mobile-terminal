@@ -149,6 +149,71 @@ describe("Registry", () => {
     expect(manifest.list()).toEqual([]);
   });
 
+  it("keeps two sessions' prompts apart when the CLIs emit the same requestId", async () => {
+    const answered: [string, string][] = [];
+    const ids = ["s1", "s2"];
+    let killFirst!: () => void;
+    const firstEnds = new Promise<void>((r) => {
+      killFirst = r;
+    });
+    const { registry, events } = setup((o: any) => {
+      const id = ids.shift()!;
+      return (async function* () {
+        yield { ...init, session_id: id };
+        // Separate CLI processes, so their control-request ids can collide.
+        void o.options
+          .canUseTool("Bash", { command: id }, toolOpts("req-1"))
+          .then((r: any) => answered.push([id, r.behavior]));
+        // The second session never ends: it must outlive the first's teardown.
+        await (id === "s1" ? firstEnds : new Promise<void>(() => {}));
+        yield result;
+      })();
+    });
+
+    await registry.handle("sessions.new", { cwd: "C:\\proj", prompt: "one" });
+    await registry.handle("sessions.new", { cwd: "C:\\proj", prompt: "two" });
+    await until("both prompts pushed", () => events.filter((e) => e.kind === "session.permission").length === 2);
+
+    killFirst();
+    await until("s1 settled by its own teardown", () => answered.length === 1);
+    // Only the dead session's prompt was denied — s2's resolver was never
+    // overwritten by the colliding key, so it is still outstanding.
+    expect(answered).toEqual([["s1", "deny"]]);
+
+    await registry.handle("sessions.approve", { sessionId: "s2", requestId: "req-1", allow: true });
+    await until("s2 answered", () => answered.length === 2);
+    expect(answered[1]).toEqual(["s2", "allow"]);
+  });
+
+  it("denies when allow is not exactly true", async () => {
+    let permissionResult: any;
+    const { registry, events } = setup(({ options }: any) =>
+      (async function* () {
+        yield init;
+        permissionResult = options.canUseTool("Bash", { command: "a" }, toolOpts("req-1"));
+        // Stay alive, so a deny here can only have come from the approve below.
+        await new Promise<void>(() => {});
+      })(),
+    );
+    await registry.handle("sessions.new", { cwd: "C:\\proj", prompt: "hi" });
+    await until("permission pushed", () => events.some((e) => e.kind === "session.permission"));
+    // A truthy non-boolean off the wire must not approve a tool.
+    await registry.handle("sessions.approve", { sessionId: "s1", requestId: "req-1", allow: "yes" });
+    expect((await permissionResult).behavior).toBe("deny");
+  });
+
+  it("passes the sessions.new title through instead of the prompt", async () => {
+    const { registry, manifest } = setup(() =>
+      (async function* () {
+        yield init;
+        await new Promise<void>(() => {});
+      })(),
+    );
+    const args = { cwd: "C:\\proj", prompt: "a prompt nobody wants as a title", title: "Deploy" };
+    await registry.handle("sessions.new", args);
+    expect(manifest.list()).toMatchObject([{ sessionId: "s1", title: "Deploy" }]);
+  });
+
   it("fails a permission left outstanding when the session dies", async () => {
     let permissionResult: any;
     const { registry, events } = setup(({ options }: any) =>
