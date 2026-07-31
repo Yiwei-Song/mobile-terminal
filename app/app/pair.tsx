@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Platform, ScrollView, StyleSheet, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
@@ -10,51 +10,8 @@ import { Field } from "../src/components/Field";
 import { MonoText } from "../src/components/MonoText";
 import { Screen } from "../src/components/Screen";
 import { Text } from "../src/components/Text";
-import { WorkbenchClient, type ConnState } from "../src/lib/client";
-import { pairingUrl, savePairing, webInsecureStorage, type Pairing } from "../src/lib/pairing";
-import { useWorkbench } from "../src/lib/store";
+import { loadPairing, parsePairing, savePairing, verify, webInsecureStorage, type Pairing } from "../src/lib/pairing";
 import { color, radius, space, stroke } from "../src/theme";
-
-// The daemon's QR is JSON: exactly the fields the manual form asks for.
-const parseQr = (raw: string): Pairing | null => {
-  try {
-    const v = JSON.parse(raw) as Partial<Pairing>;
-    if (typeof v.host !== "string" || typeof v.port !== "number" || typeof v.token !== "string") return null;
-    return { host: v.host, port: v.port, token: v.token };
-  } catch {
-    return null;
-  }
-};
-
-// A LAN daemon answers in well under a second; ten is the point where "still
-// trying" stops being information. Matches the client's own request timeout.
-const VERIFY_MS = 10_000;
-
-// Verify with a throwaway client, not the app's connection: a wrong host must
-// not leave the store retrying a dead address behind this screen. Resolves with
-// the first state that is an answer — "connecting" never is.
-const verify = (p: Pairing): Promise<ConnState> =>
-  new Promise((resolve) => {
-    let settled = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const client = new WorkbenchClient(pairingUrl(p), p.token, {
-      onEvent: () => {},
-      onState: (s) => {
-        if (s !== "connecting") done(s);
-      },
-    });
-    const done = (s: ConnState) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      client.close(); // also stops the reconnect backoff after an "offline"
-      resolve(s);
-    };
-    // A host that drops packets instead of refusing them never fires close, so
-    // the socket would sit in "connecting" forever without this.
-    timer = setTimeout(() => done("offline"), VERIFY_MS);
-    client.connect();
-  });
 
 type Mode = "intro" | "manual" | "permission" | "scanning";
 type Failure = { title: string; body: string; retry: Pairing | null };
@@ -63,20 +20,30 @@ type Failure = { title: string; body: string; retry: Pairing | null };
 const CAN_SCAN = Platform.OS !== "web";
 
 export default function Pair() {
-  // Settings' "Server" row re-enters this screen with the current pairing so a
-  // re-pair is an edit, not a retype.
-  const prefill = useLocalSearchParams<{ host?: string; port?: string; token?: string }>();
-  const connect = useWorkbench((s) => s.connect);
+  // Settings' "Server" row sets edit=1 so a re-pair is an edit, not a retype.
+  // Only the flag travels: the pairing itself is read from storage here, keeping
+  // the token out of the route URL (web address bar, history, nav state).
+  const { edit } = useLocalSearchParams<{ edit?: string }>();
 
-  const [mode, setMode] = useState<Mode>(prefill.host === undefined ? "intro" : "manual");
-  const [host, setHost] = useState(prefill.host ?? "");
-  const [port, setPort] = useState(prefill.port ?? "8790");
-  const [token, setToken] = useState(prefill.token ?? "");
+  const [mode, setMode] = useState<Mode>(edit === undefined ? "intro" : "manual");
+  const [host, setHost] = useState("");
+  const [port, setPort] = useState("8790");
+  const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [permission, requestPermission] = useCameraPermissions();
   // The camera fires this repeatedly while the QR stays in frame.
   const scanned = useRef(false);
+
+  useEffect(() => {
+    if (edit === undefined) return;
+    void loadPairing().then((p) => {
+      if (p === null) return;
+      setHost(p.host);
+      setPort(String(p.port));
+      setToken(p.token);
+    });
+  }, [edit]);
 
   const submit = async (p: Pairing) => {
     setFailure(null);
@@ -84,12 +51,20 @@ export default function Pair() {
     const state = await verify(p);
     setBusy(false);
     if (state === "online") {
-      await savePairing(p);
-      // Connect for real before leaving, so Home lands already online rather
-      // than flashing its own offline state for a beat.
-      connect(pairingUrl(p), p.token);
-      router.replace("/");
-      return;
+      try {
+        // Home connects itself on focus, so landing there is the whole job.
+        await savePairing(p);
+        router.replace("/");
+        return;
+      } catch {
+        setMode("manual");
+        setFailure({
+          title: "Couldn't save the pairing",
+          body: "The daemon answered, but this device wouldn't store the token. Try again — if it keeps failing, restart the app.",
+          retry: p,
+        });
+        return;
+      }
     }
     setMode("manual");
     setFailure(
@@ -148,7 +123,8 @@ export default function Pair() {
   const onBarcode = (r: BarcodeScanningResult) => {
     if (scanned.current) return;
     scanned.current = true;
-    const p = parseQr(r.data);
+    // The daemon's QR is JSON: exactly the fields storage holds.
+    const p = parsePairing(r.data);
     setMode("manual");
     if (p === null) {
       setFailure({ title: "Not a pairing QR", body: "That code isn't from the workbench daemon. Scan the one your PC printed.", retry: null });

@@ -1,6 +1,8 @@
 import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
 
+import { WorkbenchClient, type ClientOpts, type ConnState } from "./client";
+
 /** Everything needed to reach one daemon. Exactly what the daemon's QR encodes. */
 export interface Pairing {
   host: string;
@@ -18,10 +20,10 @@ const KEY = "workbench.pairing";
 /** The daemon's WS endpoint. One place, so a path change is one edit. */
 export const pairingUrl = (p: Pick<Pairing, "host" | "port">): string => `ws://${p.host}:${p.port}/ws`;
 
-// Storage is untrusted input: a partial write, an older app version, or a user
-// poking localStorage all land here. Anything that is not a whole pairing is
-// treated as "not paired" — that path already ends at the pair screen.
-const parse = (raw: string | null): Pairing | null => {
+// Both sources of a pairing are untrusted input — a partial write, an older app
+// version, a user poking localStorage, or a QR that isn't ours. Anything that is
+// not a whole pairing is "not paired", and that path already ends at the pair screen.
+export const parsePairing = (raw: string | null): Pairing | null => {
   if (raw === null) return null;
   try {
     const v = JSON.parse(raw) as Partial<Pairing>;
@@ -33,7 +35,7 @@ const parse = (raw: string | null): Pairing | null => {
 };
 
 export async function loadPairing(): Promise<Pairing | null> {
-  return parse(webInsecureStorage ? localStorage.getItem(KEY) : await SecureStore.getItemAsync(KEY));
+  return parsePairing(webInsecureStorage ? localStorage.getItem(KEY) : await SecureStore.getItemAsync(KEY));
 }
 
 export async function savePairing(p: Pairing): Promise<void> {
@@ -46,3 +48,40 @@ export async function clearPairing(): Promise<void> {
   if (webInsecureStorage) localStorage.removeItem(KEY);
   else await SecureStore.deleteItemAsync(KEY);
 }
+
+// A LAN daemon answers in well under a second; ten is the point where "still
+// trying" stops being information. Matches the client's own request timeout.
+const VERIFY_MS = 10_000;
+
+/**
+ * Is this pairing usable? Answers with the first connection state that is an
+ * answer — "connecting" never is — then closes the socket.
+ *
+ * Uses a throwaway client, not the app's connection: a wrong host must not leave
+ * the store retrying a dead address behind the pair screen.
+ */
+export const verify = (
+  p: Pairing,
+  opts: { timeoutMs?: number } & ClientOpts = {},
+): Promise<ConnState> =>
+  new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const done = (s: ConnState) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      client.close(); // also stops the reconnect backoff after an "offline"
+      resolve(s);
+    };
+    const client = new WorkbenchClient(
+      pairingUrl(p),
+      p.token,
+      { onEvent: () => {}, onState: (s) => s !== "connecting" && done(s) },
+      opts,
+    );
+    // A host that drops packets instead of refusing them never fires close, so
+    // the socket would sit in "connecting" forever without this.
+    timer = setTimeout(() => done("offline"), opts.timeoutMs ?? VERIFY_MS);
+    client.connect();
+  });

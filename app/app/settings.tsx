@@ -15,8 +15,9 @@ import { useWorkbench } from "../src/lib/store";
 import { color, icon as iconSize, opacity, space, stroke } from "../src/theme";
 
 const HEX = "0123456789abcdef";
-// wb- plus 12 hex: enough that nobody guesses your topic, short enough to read
-// off a screen while typing it into the ntfy app.
+// wb- plus 12 hex: obscure enough that a topic isn't stumbled onto, short enough
+// to read off a screen. Math.random is not a CSPRNG — a topic is obscurity, not
+// a secret, and the daemon is what actually authenticates.
 const randomTopic = (): string =>
   `wb-${Array.from({ length: 12 }, () => HEX[Math.floor(Math.random() * HEX.length)]).join("")}`;
 
@@ -57,13 +58,9 @@ export default function Settings() {
     }
   };
 
-  const rePair = () => {
-    if (pairing === null) {
-      router.push("/pair");
-      return;
-    }
-    router.push({ pathname: "/pair", params: { host: pairing.host, port: String(pairing.port), token: pairing.token } });
-  };
+  // edit=1, not the pairing itself: the pair screen reads that from storage, so
+  // the token never lands in a URL, browser history or saved nav state.
+  const rePair = () => router.push(pairing === null ? "/pair" : { pathname: "/pair", params: { edit: "1" } });
 
   const doDisconnect = async () => {
     await clearPairing();

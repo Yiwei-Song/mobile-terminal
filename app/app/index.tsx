@@ -26,7 +26,9 @@ export default function Home() {
   const connState = useWorkbench((s) => s.connState);
   const machine = useWorkbench((s) => s.machine);
   const connect = useWorkbench((s) => s.connect);
-  const [pairing, setPairing] = useState<Pairing | null>(null);
+  // undefined until storage answers: rendering "not paired" for that frame is a
+  // flash of the wrong screen on every cold start.
+  const [pairing, setPairing] = useState<Pairing | null | undefined>(undefined);
   // The token we already handed the store. Re-running connect() on every focus
   // would tear down a live socket (or restart a retry backoff) for nothing.
   const wired = useRef<string | null>(null);
@@ -52,6 +54,8 @@ export default function Home() {
   );
 
   const conn = CONN[connState];
+
+  if (pairing === undefined) return null;
 
   return (
     <Screen>

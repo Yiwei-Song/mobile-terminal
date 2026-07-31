@@ -7,19 +7,21 @@ export type FieldProps = Omit<TextInputProps, "style"> & {
   label: string;
   /** One line under the input: what the value is for, or what went wrong. */
   hint?: string;
-  hintColor?: "textMut" | "danger";
   /** Machine values (host, port, token, topic) read as mono — at body size. */
   mono?: boolean;
 };
 
 /** Labelled text input. The only input primitive; both screens use it. */
-export function Field({ label, hint, hintColor = "textMut", mono = false, ...rest }: FieldProps) {
+export function Field({ label, hint, mono = false, ...rest }: FieldProps) {
   return (
     <View style={styles.wrap}>
       <Text variant="sub" color="textMut">
         {label}
       </Text>
       <TextInput
+        // The visual label is a sibling <Text>, which a screen reader does not
+        // tie to the input on its own.
+        accessibilityLabel={label}
         autoCapitalize="none"
         autoCorrect={false}
         placeholderTextColor={color.idle}
@@ -29,7 +31,7 @@ export function Field({ label, hint, hintColor = "textMut", mono = false, ...res
         {...rest}
       />
       {hint !== undefined && (
-        <Text variant="sub" color={hintColor}>
+        <Text variant="sub" color="textMut">
           {hint}
         </Text>
       )}

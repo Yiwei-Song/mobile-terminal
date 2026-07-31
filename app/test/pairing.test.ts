@@ -1,4 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
+
+import { startDaemon, idle } from "./harness";
 
 // Both storage backends are native modules, so they are stubbed: what is under
 // test is the branch between them, the JSON round-trip, and the "garbage in
@@ -74,5 +76,73 @@ describe("pairingUrl", () => {
   it("points at the daemon's /ws path", async () => {
     const { pairingUrl } = await importFor("android");
     expect(pairingUrl(P)).toBe("ws://192.168.1.24:8790/ws");
+  });
+});
+
+// verify against the real daemon over real sockets — a stub server would prove
+// nothing about the three answers the pair screen branches on.
+describe("verify", () => {
+  const BASE = 20;
+  const RealWS = globalThis.WebSocket;
+  let opened = 0;
+
+  // Counting sockets is how "it stopped trying" becomes observable: verify must
+  // leave nothing retrying a dead (or refusing) address behind the pair screen.
+  beforeEach(() => {
+    opened = 0;
+    globalThis.WebSocket = new Proxy(RealWS, {
+      construct: (t, a) => {
+        opened++;
+        return Reflect.construct(t, a) as object;
+      },
+    });
+  });
+  afterEach(() => {
+    globalThis.WebSocket = RealWS;
+  });
+
+  const stopped = async () => {
+    const seen = opened;
+    await new Promise((r) => setTimeout(r, BASE * 3)); // several backoff steps
+    expect(opened, "no further connect attempts after verify resolved").toBe(seen);
+  };
+
+  it("says online for a live daemon", async () => {
+    const { verify } = await importFor("android");
+    const d = await startDaemon(idle());
+
+    expect(await verify({ host: "127.0.0.1", port: d.port, token: d.token }, { baseDelayMs: BASE })).toBe("online");
+    await stopped();
+    await d.close();
+  });
+
+  it("says unauthorized for a wrong token", async () => {
+    const { verify } = await importFor("android");
+    const d = await startDaemon(idle());
+
+    expect(await verify({ host: "127.0.0.1", port: d.port, token: "not-the-token" }, { baseDelayMs: BASE })).toBe(
+      "unauthorized",
+    );
+    await stopped();
+    await d.close();
+  });
+
+  it("says offline for a port nothing is listening on", async () => {
+    const { verify } = await importFor("android");
+    const d = await startDaemon(idle());
+    await d.close(); // the port is free now, so the connect is refused
+
+    expect(await verify({ host: "127.0.0.1", port: d.port, token: d.token }, { baseDelayMs: BASE })).toBe("offline");
+    await stopped();
+  });
+
+  it("gives up on a host that never answers", async () => {
+    const { verify } = await importFor("android");
+    // Reserved-for-documentation address: nothing routes there, so the socket
+    // sits in "connecting" and only the timeout ends it.
+    expect(await verify({ host: "192.0.2.1", port: 8790, token: "t" }, { baseDelayMs: BASE, timeoutMs: 60 })).toBe(
+      "offline",
+    );
+    await stopped();
   });
 });
