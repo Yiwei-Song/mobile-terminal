@@ -14,4 +14,6 @@ export type {
   SessionStatus,
   SessionEvent,
   SessionRow,
+  MachineEvent,
+  PushEvent,
 } from "../daemon/src/protocol";

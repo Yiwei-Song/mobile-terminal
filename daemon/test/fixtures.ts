@@ -1,4 +1,46 @@
 import type { SDKAssistantMessage, SDKResultMessage, SDKSystemMessage } from "@anthropic-ai/claude-agent-sdk";
+import { KeepAwake, type PowerDeps } from "../src/power.js";
+import type { SystemDeps } from "../src/system.js";
+import type { MachineDeps } from "../src/sessions/registry.js";
+
+const GB = 1024 ** 3;
+
+// A canned `si` — same shapes the real library returns, so snapshot/topProcesses
+// run their real mapping over it.
+const fakeSi = (procs: { pid: number; name: string; cpu: number; memRss: number }[] = []) =>
+  ({
+    currentLoad: async () => ({ currentLoad: 10 }),
+    mem: async () => ({ total: 32 * GB, used: 16 * GB }),
+    fsSize: async () => [{ mount: "C:", size: 100 * GB, used: 50 * GB, use: 50 }],
+    time: async () => ({ uptime: 3600 }),
+    processes: async () => ({ list: procs }),
+  }) as unknown as SystemDeps["si"];
+
+// A spawn whose child never exits on its own: KeepAwake's hold stays "active"
+// until it kill()s the child (matching the real long-running PS).
+const heldSpawn = (): PowerDeps["spawn"] =>
+  (() => ({ pid: 1, kill() {}, on() { return this; } })) as unknown as PowerDeps["spawn"];
+
+// A spawn whose child exits(0) on the next tick: displayOff (used by power.lock)
+// awaits that exit, so this lets the lock RPC resolve. Records nothing — the
+// exec side records the command lines that matter.
+const exitingSpawn = (): PowerDeps["spawn"] =>
+  ((_cmd: string, _args: string[]) => {
+    const handlers: Record<string, (a: unknown) => void> = {};
+    setImmediate(() => handlers["exit"]?.(0));
+    return { pid: 2, kill() {}, on(ev: string, cb: (a: unknown) => void) { handlers[ev] = cb; return this; } };
+  }) as unknown as PowerDeps["spawn"];
+
+// A full MachineDeps backed by fakes: real KeepAwake (hold state observable via
+// .active), real snapshot/lock/reboot code over fake si + a recording exec.
+export function fakeMachine(procs: Parameters<typeof fakeSi>[0] = []) {
+  const execCmds: string[] = [];
+  const exec = ((cmd: string, cb: (e: unknown) => void) => { execCmds.push(cmd); cb(null); return {}; }) as unknown as PowerDeps["exec"];
+  const power: PowerDeps = { spawn: exitingSpawn(), exec };
+  const keepAwake = new KeepAwake({ spawn: heldSpawn(), exec });
+  const machine: MachineDeps = { system: { si: fakeSi(procs) }, keepAwake, power };
+  return { machine, keepAwake, execCmds };
+}
 
 // Shared fake SDK messages. `satisfies`-checked against the real SDK types, so a
 // shape change in the SDK breaks these tests instead of only production.

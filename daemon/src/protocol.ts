@@ -10,14 +10,22 @@ export type ClientMsg =
   | { type: "req"; id: string; method: "sessions.approve"; params: { sessionId: string; requestId: string; allow: boolean } }
   | { type: "req"; id: string; method: "sessions.pending" }
   | { type: "req"; id: string; method: "config.get" }
-  | { type: "req"; id: string; method: "config.set"; params: { ntfyTopic: string | null } };
+  | { type: "req"; id: string; method: "config.set"; params: { ntfyTopic: string | null } }
+  | { type: "req"; id: string; method: "system.metrics" }
+  | { type: "req"; id: string; method: "system.processes" }
+  | { type: "req"; id: string; method: "system.kill"; params: { pid: number } }
+  | { type: "req"; id: string; method: "power.state" }
+  | { type: "req"; id: string; method: "power.keepAwake"; params: { on: boolean } }
+  | { type: "req"; id: string; method: "power.lock" }
+  | { type: "req"; id: string; method: "power.reboot"; params: { delaySec: number } }
+  | { type: "req"; id: string; method: "power.abortReboot" };
 
 // Daemon → client.
 export type ServerMsg =
   | { type: "auth.ok"; version: string }
   | { type: "res"; id: string; ok: true; data: unknown }
   | { type: "res"; id: string; ok: false; error: string }
-  | { type: "event"; event: SessionEvent };
+  | { type: "event"; event: PushEvent };
 
 export type SessionStatus = "running" | "waiting_on_user" | "idle" | "dead";
 
@@ -51,7 +59,17 @@ export type SessionEvent =
 // and that RPC's return share a shape.
 export type PermissionEvent = { kind: "session.permission"; sessionId: string; requestId: string; toolName: string; summary: string; cwd: string };
 
+// Not a session event — it has no sessionId, it's about the host. Pushed once
+// when power.reboot schedules a shutdown so the app can count down. The event
+// channel carries both; ntfyFor ignores it (nothing to notify — the phone that
+// asked for the reboot already knows).
+export type MachineEvent = { kind: "machine.reboot"; delaySec: number };
+
+// Everything the daemon can push over the "event" channel.
+export type PushEvent = SessionEvent | MachineEvent;
+
 const str = (v: unknown): boolean => typeof v === "string";
+const num = (v: unknown): boolean => typeof v === "number";
 
 // Method whitelist and params validator in one: an unlisted method has no entry,
 // and a listed one must match its shape or the ClientMsg type would be a lie.
@@ -68,6 +86,16 @@ const METHODS = new Map<string, (p: any) => boolean>([
   // Explicit null clears the topic; an absent key is a malformed request, not
   // a silent "leave it alone" — the ClientMsg type promises the field is there.
   ["config.set", (p) => p?.ntfyTopic === null || str(p?.ntfyTopic)],
+  ["system.metrics", () => true],
+  ["system.processes", () => true],
+  ["system.kill", (p) => num(p?.pid)],
+  ["power.state", () => true],
+  ["power.keepAwake", (p) => typeof p?.on === "boolean"],
+  ["power.lock", () => true],
+  // Any number passes the wire check; the handler clamps out-of-range/NaN. JSON
+  // can't carry NaN, so a real request only ever sends a finite delaySec here.
+  ["power.reboot", (p) => num(p?.delaySec)],
+  ["power.abortReboot", () => true],
 ]);
 
 export function parseClientMsg(raw: string): ClientMsg | null {

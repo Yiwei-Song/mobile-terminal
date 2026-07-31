@@ -5,14 +5,14 @@ import { join } from "node:path";
 import { loadConfig } from "../src/config.js";
 import { Manifest } from "../src/sessions/manifest.js";
 import { Registry } from "../src/sessions/registry.js";
-import type { SessionEvent } from "../src/protocol.js";
-import { init, result, tick, toolOpts } from "./fixtures.js";
+import type { PushEvent } from "../src/protocol.js";
+import { init, result, tick, toolOpts, fakeMachine } from "./fixtures.js";
 
 const setup = (query: unknown) => {
-  const events: SessionEvent[] = [];
+  const events: PushEvent[] = [];
   const dir = mkdtempSync(join(tmpdir(), "wb-"));
   const manifest = new Manifest(dir);
-  const registry = new Registry({ query } as any, manifest, (e) => events.push(e), loadConfig(dir));
+  const registry = new Registry({ query } as any, manifest, (e) => events.push(e), loadConfig(dir), fakeMachine().machine);
   return { registry, manifest, events };
 };
 

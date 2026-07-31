@@ -1,11 +1,28 @@
 import { hostname } from "node:os";
-import type { ConfigInfo, PermissionEvent, SessionEvent } from "../protocol.js";
+import type { ConfigInfo, PermissionEvent, PushEvent, SessionEvent } from "../protocol.js";
 import { setNtfyTopic, type Config } from "../config.js";
 import { VERSION } from "../version.js";
+import { snapshot, topProcesses, killProcess, type SystemDeps } from "../system.js";
+import { KeepAwake, lockWorkstation, displayOff, reboot, abortReboot, type PowerDeps } from "../power.js";
 import { ClaudeSession, type ClaudeDeps } from "./claude.js";
 import type { Manifest, ManifestEntry } from "./manifest.js";
 
 type StatusEvent = Extract<SessionEvent, { kind: "session.status" }>;
+
+// The daemon-owned singletons the system.*/power.* RPCs act on. Bundled into one
+// ctor arg (not three) so the registry's signature stays readable; injected so
+// tests drive real snapshot/lock/reboot code with fake si + spawn/exec.
+export interface MachineDeps {
+  system: SystemDeps; // { si } for metrics/processes
+  keepAwake: KeepAwake; // the one keep-awake hold the daemon holds while it runs
+  power: PowerDeps; // { spawn, exec } for lock/displayOff/reboot
+}
+
+// shutdown /r wants whole seconds; 5..120 keeps a fat-fingered 0 from rebooting
+// now and a bogus huge value from parking the machine for a day. NaN (can't come
+// off the wire, but a direct caller could) floors to 5.
+export const clampRebootDelay = (s: number): number =>
+  Number.isFinite(s) ? Math.min(120, Math.max(5, Math.round(s))) : 5;
 
 // Wires the WS methods to running CLI processes and the on-disk manifest.
 export class Registry {
@@ -22,11 +39,13 @@ export class Registry {
   constructor(
     private readonly deps: ClaudeDeps,
     private readonly manifest: Manifest,
-    private readonly push: (e: SessionEvent) => void,
+    private readonly push: (e: PushEvent) => void,
     // ponytail: config lives here because the registry already *is* the server's
     // request handler and config.* is two lines. A second handler object (and
-    // the composition in index.ts) would be more wiring than it answers.
+    // the composition in index.ts) would be more wiring than it answers. Same
+    // reasoning extends system.*/power.* — one dispatch, one place to test.
     private readonly cfg: Config,
+    private readonly machine: MachineDeps,
   ) {}
 
   // Throwing is the error channel: startServer turns it into { ok: false, error }.
@@ -95,6 +114,45 @@ export class Registry {
         // reopens from a notification) asks here so the approval card reappears.
         return [...this.pending.values()].map((p) => p.event);
 
+      case "system.metrics":
+        return snapshot(this.machine.system);
+
+      case "system.processes":
+        return topProcesses(this.machine.system);
+
+      case "system.kill":
+        // Its own {ok,error?} is the answer — a refused/failed kill is data the
+        // phone shows, not an RPC error.
+        return killProcess(params.pid);
+
+      case "power.state":
+        return this.powerState();
+
+      case "power.keepAwake":
+        if (params.on) this.machine.keepAwake.start();
+        else this.machine.keepAwake.stop();
+        return this.powerState();
+
+      case "power.lock":
+        await lockWorkstation(this.machine.power);
+        // Display-off is a best-effort follow-on: a monitor that won't turn off
+        // must not report the lock — which did happen — as a failure.
+        await displayOff(this.machine.power).catch(() => {});
+        return { ok: true };
+
+      case "power.reboot": {
+        const delaySec = clampRebootDelay(params.delaySec);
+        await reboot(this.machine.power, delaySec);
+        // Only after the schedule takes: the countdown the app shows must match a
+        // reboot that is actually pending, not one the shutdown call rejected.
+        this.push({ kind: "machine.reboot", delaySec });
+        return { ok: true };
+      }
+
+      case "power.abortReboot":
+        await abortReboot(this.machine.power);
+        return { ok: true };
+
       default:
         throw new Error(`unknown method: ${method}`);
     }
@@ -115,6 +173,12 @@ export class Registry {
   // string | null, so normalize rather than send undefined (which JSON drops).
   private configInfo(): ConfigInfo {
     return { ntfyTopic: this.cfg.ntfyTopic ?? null, version: VERSION, hostname: hostname() };
+  }
+
+  // ecoMode is always false for this plan: keepAwake is a manual on/off hold.
+  // The session-aware "release when nothing is running" mode is a follow-up.
+  private powerState(): { keepAwake: boolean; ecoMode: boolean } {
+    return { keepAwake: this.machine.keepAwake.active, ecoMode: false };
   }
 
   private entry(sessionId: string): ManifestEntry {

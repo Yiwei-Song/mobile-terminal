@@ -1,10 +1,14 @@
 import { networkInterfaces } from "node:os";
+import { spawn, exec } from "node:child_process";
+import * as si from "systeminformation";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import qrcode from "qrcode-terminal";
 import { loadConfig } from "./config.js";
 import { startServer } from "./server.js";
 import { notify, ntfyFor } from "./notify.js";
-import type { SessionEvent } from "./protocol.js";
+import { runBootResume } from "./boot.js";
+import { KeepAwake, lockWorkstation } from "./power.js";
+import type { PushEvent } from "./protocol.js";
 import { Manifest } from "./sessions/manifest.js";
 import { Registry } from "./sessions/registry.js";
 
@@ -12,14 +16,18 @@ import { Registry } from "./sessions/registry.js";
 // directory instead of the user's real %APPDATA%\workbench.
 const cfg = loadConfig(process.env["WORKBENCH_DATA_DIR"]);
 const manifest = new Manifest(cfg.dataDir);
-// A killed daemon leaves its live rows frozen as running/waiting_on_user. Clear
-// them before the registry (or any client) can read them back as real.
-manifest.normalizeAfterRestart();
+
+// system/power singletons the daemon owns, with the real deps. KeepAwake is
+// started now and held for the whole process lifetime — the workbench must not
+// sleep out from under a phone that's driving it.
+const powerDeps = { spawn, exec };
+const keepAwake = new KeepAwake(powerDeps);
+keepAwake.start();
 
 // ponytail: single-push-ref; event bus if the daemon grows. The registry is
 // built before the server (it *is* the server's handler), so its push starts as
 // a no-op and is filled in by the first request.
-let pushRef: (e: SessionEvent) => void = () => {};
+let pushRef: (e: PushEvent) => void = () => {};
 // A raw uuid on a lock screen says nothing about which session it is; the
 // manifest already holds the title the list shows, so read it back from there.
 const titleOf = (sessionId: string) =>
@@ -30,11 +38,19 @@ const registry = new Registry(
   (e) => {
     pushRef(e);
     // cfg.ntfyTopic is read per event, so a config.set takes effect immediately.
-    const n = ntfyFor(e, titleOf(e.sessionId));
+    const n = ntfyFor(e, "sessionId" in e ? titleOf(e.sessionId) : "");
     if (n) notify(cfg.ntfyTopic, n.title, n.body);
   },
   cfg,
+  { system: { si }, keepAwake, power: powerDeps },
 );
+
+// After the manifest is normalized and before any client can read it: clear
+// stale running rows, lock the screen (privacy), and tell the phone we're back.
+runBootResume(manifest, {
+  lock: () => void lockWorkstation(powerDeps),
+  notify: (title, body) => notify(cfg.ntfyTopic, title, body),
+});
 
 const srv = await startServer(cfg, (method, params, push) => {
   pushRef = push;

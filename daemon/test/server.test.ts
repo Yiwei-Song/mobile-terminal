@@ -8,6 +8,7 @@ import { startServer } from "../src/server.js";
 import { VERSION } from "../src/version.js";
 import { Manifest } from "../src/sessions/manifest.js";
 import { Registry } from "../src/sessions/registry.js";
+import { fakeMachine } from "./fixtures.js";
 
 const open = (port: number) => new WebSocket(`ws://127.0.0.1:${port}/ws`);
 // ws answers pings for you unless you ask it not to — the one supported way to
@@ -161,7 +162,7 @@ describe("server", () => {
     // and index.ts's notify closure reads — sharing it is what makes a topic
     // change take effect without a restart.
     const cfg = { ...loadConfig(dir), port: 0 };
-    const registry = new Registry({ query: () => (async function* () {})() } as any, new Manifest(dir), () => {}, cfg);
+    const registry = new Registry({ query: () => (async function* () {})() } as any, new Manifest(dir), () => {}, cfg, fakeMachine().machine);
     const srv = await startServer(cfg, (method, params) => registry.handle(method, params));
 
     const ws = open(srv.port);

@@ -5,11 +5,11 @@ import { fileURLToPath } from "node:url";
 import { timingSafeEqual } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import type { Config } from "./config.js";
-import { parseClientMsg, type ServerMsg, type SessionEvent } from "./protocol.js";
+import { parseClientMsg, type ServerMsg, type PushEvent } from "./protocol.js";
 import { VERSION } from "./version.js";
 
 // A thrown Error becomes { ok: false, error: message } — handlers signal failure by throwing.
-export type RequestHandler = (method: string, params: any, push: (e: SessionEvent) => void) => Promise<unknown>;
+export type RequestHandler = (method: string, params: any, push: (e: PushEvent) => void) => Promise<unknown>;
 
 // Injectable only so the liveness test can run in milliseconds instead of a minute.
 export interface ServerOpts {
@@ -30,7 +30,7 @@ export function startServer(cfg: Config, handler: RequestHandler, opts: ServerOp
   };
 
   const authed = new Set<WebSocket>();
-  const push = (event: SessionEvent) => {
+  const push = (event: PushEvent) => {
     const msg = JSON.stringify({ type: "event", event } satisfies ServerMsg);
     for (const ws of authed) if (ws.readyState === WebSocket.OPEN) ws.send(msg);
   };
