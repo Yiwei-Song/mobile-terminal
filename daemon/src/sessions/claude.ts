@@ -30,6 +30,9 @@ export class ClaudeSession {
   private wake: (() => void) | null = null;
   private closed = false;
   private pending = 0;
+  // Once dead, nothing may report the session as alive again — a permission
+  // answered after the CLI is gone would otherwise emit `running`.
+  private terminal = false;
 
   static start(deps: ClaudeDeps, opts: StartOpts): ClaudeSession {
     return new ClaudeSession(deps, opts);
@@ -61,11 +64,10 @@ export class ClaudeSession {
         resume: opts.resume,
         canUseTool: this.permission(),
         includePartialMessages: false,
-        // No filesystem settings: a `permissions.allow` rule in the user's
-        // settings.json would let a tool run without ever reaching canUseTool,
-        // i.e. silently auto-approve from the phone. Cost: CLAUDE.md is not
-        // loaded either. Switch to ['project'] if that trade stops being worth it.
-        settingSources: [],
+        // No `settingSources`: the SDK default loads the user's own settings
+        // (CLAUDE.md, MCP servers, hooks, permissions). An allowlisted tool
+        // skipping phone approval is the user's configured intent on their own
+        // machine; the daemon itself adds no bypass.
       },
     });
     this.done = this.pump(settleId, failId);
@@ -74,7 +76,14 @@ export class ClaudeSession {
 
   // Queue a user message. The SDK drains `input()`, so this works mid-session.
   send(text: string): void {
-    this.inbox.push({ type: "user", message: { role: "user", content: text }, parent_tool_use_id: null });
+    this.inbox.push({
+      type: "user",
+      message: { role: "user", content: text },
+      parent_tool_use_id: null,
+      // This is keyboard input from the phone. Hosts must stamp it: an absent
+      // origin is unattributed and fails closed at the SDK's trust gates.
+      origin: { kind: "human" },
+    });
     this.wake?.();
     this.wake = null;
   }
@@ -85,12 +94,13 @@ export class ClaudeSession {
     void this.q.interrupt().catch(() => {});
   }
 
-  // Ends the input stream, which ends the CLI subprocess. Without it a session
+  // Ends the input stream and tears down the query. Without it a session
   // outlives the daemon's interest in it — interrupt() only stops a turn.
   close(): void {
     this.closed = true;
     this.wake?.();
     this.wake = null;
+    this.q.close?.(); // optional-called: test fakes are bare generators
   }
 
   // ponytail: array + single waiter, not a channel library. One producer
@@ -118,7 +128,8 @@ export class ClaudeSession {
       this.status("waiting_on_user");
       this.emit({ kind: "session.permission", sessionId: this.sid, requestId, toolName, summary, cwd });
       try {
-        const allow = await this.opts.askPermission({ requestId, toolName, summary, cwd });
+        // A lost phone connection denies; it must never throw into the SDK.
+        const allow = await this.opts.askPermission({ requestId, toolName, summary, cwd }).catch(() => false);
         return allow ? { behavior: "allow", updatedInput: input } : { behavior: "deny", message: "Denied from phone" };
       } finally {
         if (--this.pending === 0) this.status("running");
@@ -147,7 +158,7 @@ export class ClaudeSession {
             kind: "session.done",
             sessionId: this.sid,
             ok: m.subtype === "success",
-            costUsd: m.total_cost_usd ?? null,
+            costUsd: m.total_cost_usd,
           });
           this.status("idle");
         }
@@ -157,6 +168,10 @@ export class ClaudeSession {
       failId(e);
       throw e;
     }
+    // The stream only ends when the CLI is gone, so the session is over even if
+    // it never sent a result (killed, transport dropped, close()). Without this
+    // the manifest would sit at `running` forever.
+    this.status("dead");
     // No-op once init has settled it; otherwise the CLI died quietly and an
     // awaited `id` would hang forever.
     failId(new Error("claude session ended before reporting a session id"));
@@ -166,7 +181,11 @@ export class ClaudeSession {
     this.opts.onEvent(e);
   }
 
+  // `dead` is the only one-way status: `idle` is per-turn and a later turn
+  // legitimately goes back to running.
   private status(status: SessionStatus): void {
+    if (this.terminal) return;
+    this.terminal = status === "dead";
     this.emit({ kind: "session.status", sessionId: this.sid, status, title: this.title });
   }
 }
@@ -177,4 +196,4 @@ const summarize = (name: string, input: Record<string, unknown>): string => {
   return `${name}: ${typeof key === "string" ? key : JSON.stringify(input ?? {}).slice(0, 200)}`;
 };
 
-const titleOf = (s: string): string => s.trim().split("\n")[0]!.slice(0, 60) || "session";
+const titleOf = (s: string): string => s.trim().split(/\r?\n/)[0]!.slice(0, 60) || "session";

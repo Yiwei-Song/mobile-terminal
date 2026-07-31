@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc -p .",
-    "test": "vitest run",
+    "test": "tsc -p tsconfig.test.json && vitest run",
     "smoke": "tsx scripts/smoke.ts"
   },
   "dependencies": {

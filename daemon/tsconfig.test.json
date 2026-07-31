@@ -1,0 +1,7 @@
+// Typechecks the tests too, so the `satisfies` SDK fixtures actually break
+// when the SDK's shapes drift. Separate file because the build's rootDir is src.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "rootDir": "." },
+  "include": ["src", "test"]
+}

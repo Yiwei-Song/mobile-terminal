@@ -1,33 +1,62 @@
 import { describe, it, expect } from "vitest";
+import type { SDKAssistantMessage, SDKResultMessage, SDKSystemMessage } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeSession } from "../src/sessions/claude.js";
 import type { SessionEvent } from "../src/protocol.js";
 
-// These fakes mirror the real SDK shapes from
-// node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts — SDKSystemMessage,
-// SDKAssistantMessage, SDKResultSuccess, and the 3-arg CanUseTool. If the SDK
-// changes shape, this test is what should break.
-const init = { type: "system", subtype: "init", session_id: "s1", uuid: "u0", cwd: "C:\\proj" };
+// The fakes are `satisfies`-checked against the real SDK types, so a shape
+// change in the SDK breaks this test instead of only production.
+const init = {
+  type: "system",
+  subtype: "init",
+  session_id: "s1",
+  uuid: "00000000-0000-4000-8000-000000000000",
+  cwd: "C:\\proj",
+  apiKeySource: "oauth",
+  claude_code_version: "0.0.0-test",
+  tools: [],
+  mcp_servers: [],
+  model: "claude-test",
+  permissionMode: "default",
+  slash_commands: [],
+  output_style: "default",
+  skills: [],
+  plugins: [],
+} satisfies SDKSystemMessage;
 const result = {
   type: "result",
   subtype: "success",
   session_id: "s1",
-  uuid: "u9",
+  uuid: "00000000-0000-4000-8000-000000000009",
   is_error: false,
-  total_cost_usd: 0.01,
+  duration_ms: 1,
+  duration_api_ms: 1,
+  num_turns: 1,
   result: "ok",
-};
-const assistant = (content: unknown[]) => ({
-  type: "assistant",
-  session_id: "s1",
-  uuid: "u1",
-  parent_tool_use_id: null,
-  message: { content },
-});
+  stop_reason: "end_turn",
+  total_cost_usd: 0.01,
+  // ponytail: usage/modelUsage are unread by the adapter; cast rather than
+  // hand-build every token counter the API type requires.
+  usage: {} as SDKResultMessage["usage"],
+  modelUsage: {},
+  permission_denials: [],
+} satisfies SDKResultMessage;
+const assistant = (content: SDKAssistantMessage["message"]["content"]) =>
+  ({
+    type: "assistant",
+    session_id: "s1",
+    uuid: "00000000-0000-4000-8000-000000000001",
+    parent_tool_use_id: null,
+    // ponytail: BetaMessage's envelope fields (usage, container, diagnostics…)
+    // are never read by the adapter, so the wrapper is cast; `content` — the
+    // part the adapter parses — stays type-checked through the parameter.
+    message: { role: "assistant", content } as SDKAssistantMessage["message"],
+  }) satisfies SDKAssistantMessage;
 const toolOpts = (requestId: string) => ({
   signal: new AbortController().signal,
   toolUseID: "tu_1",
   requestId,
 });
+const tick = () => new Promise<void>((r) => setImmediate(r));
 
 const collector = () => {
   const events: SessionEvent[] = [];
@@ -39,22 +68,25 @@ describe("ClaudeSession", () => {
     const { events, onEvent } = collector();
     const asked: unknown[] = [];
     let permissionResult: unknown;
+    let passed: any;
     const deps = {
-      query: ({ options }: any) =>
-        (async function* () {
+      query: ({ options }: any) => {
+        passed = options;
+        return (async function* () {
           yield init;
           permissionResult = await options.canUseTool("Bash", { command: "echo hi" }, toolOpts("req-1"));
           yield assistant([
-            { type: "text", text: "done!" },
+            { type: "text", text: "done!", citations: null },
             { type: "tool_use", id: "tu_1", name: "Read", input: { file_path: "C:\\proj\\a.ts" } },
           ]);
           yield result;
-        })(),
+        })();
+      },
     };
 
     const s = ClaudeSession.start(deps as any, {
       cwd: "C:\\proj",
-      prompt: "hi there\nsecond line",
+      prompt: "hi there\r\nsecond line",
       onEvent,
       askPermission: async (req) => {
         asked.push(req);
@@ -83,12 +115,17 @@ describe("ClaudeSession", () => {
       summary: "Read: C:\\proj\\a.ts",
     });
     expect(events).toContainEqual({ kind: "session.done", sessionId: "s1", ok: true, costUsd: 0.01 });
-    expect(events.at(-1)).toMatchObject({ kind: "session.status", status: "idle" });
+    // The turn ends idle; the stream ending afterwards means the CLI is gone.
+    expect(events.at(-2)).toMatchObject({ kind: "session.status", status: "idle" });
+    expect(events.at(-1)).toMatchObject({ kind: "session.status", status: "dead" });
 
     // waiting_on_user wraps the permission event, and running is restored after.
     const at = kinds.indexOf("session.permission");
     expect(events[at - 1]).toMatchObject({ kind: "session.status", status: "waiting_on_user" });
     expect(events[at + 1]).toMatchObject({ kind: "session.status", status: "running" });
+
+    // The daemon adds no settings bypass: default settings sources apply.
+    expect(passed.settingSources).toBeUndefined();
   });
 
   it("denies when the user says no", async () => {
@@ -145,13 +182,65 @@ describe("ClaudeSession", () => {
     });
     await s.done;
     const statuses = events.filter((e) => e.kind === "session.status").map((e: any) => e.status);
-    expect(statuses).toEqual(["running", "waiting_on_user", "waiting_on_user", "running", "idle"]);
+    expect(statuses).toEqual(["running", "waiting_on_user", "waiting_on_user", "running", "idle", "dead"]);
+  });
+
+  it("never reports running after the session is dead", async () => {
+    const { events, onEvent } = collector();
+    let answer!: (allow: boolean) => void;
+    const deps = {
+      query: ({ options }: any) =>
+        (async function* () {
+          yield init;
+          // Ask, then let the stream end with the permission still outstanding.
+          void options.canUseTool("Bash", { command: "a" }, toolOpts("req-x"));
+        })(),
+    };
+    const s = ClaudeSession.start(deps as any, {
+      cwd: "C:\\proj",
+      prompt: "hi",
+      onEvent,
+      askPermission: () =>
+        new Promise<boolean>((r) => {
+          answer = r;
+        }),
+    });
+    await s.done;
+    answer(true); // the phone answers after the CLI is already gone
+    await tick();
+
+    const statuses = events.filter((e) => e.kind === "session.status").map((e: any) => e.status);
+    expect(statuses).toEqual(["running", "waiting_on_user", "dead"]);
+  });
+
+  it("treats a rejected permission prompt as a deny", async () => {
+    const { onEvent } = collector();
+    let permissionResult: any;
+    const deps = {
+      query: ({ options }: any) =>
+        (async function* () {
+          yield init;
+          permissionResult = await options.canUseTool("Bash", { command: "a" }, toolOpts("req-z"));
+          yield result;
+        })(),
+    };
+    const s = ClaudeSession.start(deps as any, {
+      cwd: "C:\\proj",
+      prompt: "hi",
+      onEvent,
+      askPermission: async () => {
+        throw new Error("phone disconnected");
+      },
+    });
+    await s.done;
+    expect(permissionResult.behavior).toBe("deny");
   });
 
   it("streams follow-up input into the running query and interrupts it", async () => {
     const { onEvent } = collector();
     const sent: any[] = [];
     let interrupted = false;
+    let queryClosed = false;
     const deps = {
       query: ({ prompt }: any) => {
         const gen = (async function* () {
@@ -164,6 +253,9 @@ describe("ClaudeSession", () => {
         return Object.assign(gen, {
           interrupt: async () => {
             interrupted = true;
+          },
+          close: () => {
+            queryClosed = true;
           },
         });
       },
@@ -180,7 +272,13 @@ describe("ClaudeSession", () => {
     await s.done;
     expect(sent.map((m) => m.message.content)).toEqual(["first", "second"]);
     expect(sent.every((m) => m.type === "user" && m.message.role === "user")).toBe(true);
+    // Keyboard input must be stamped as human or it fails closed at trust gates.
+    expect(sent.every((m) => m.origin?.kind === "human")).toBe(true);
     expect(interrupted).toBe(true);
+
+    // close() must tear the subprocess down, not just end stdin.
+    s.close();
+    expect(queryClosed).toBe(true);
   });
 
   it("marks the session dead and rejects done when the SDK throws", async () => {
@@ -203,8 +301,8 @@ describe("ClaudeSession", () => {
     expect(events.at(-1)).toMatchObject({ kind: "session.status", status: "dead" });
   });
 
-  it("rejects id when the session ends without ever reporting one", async () => {
-    const { onEvent } = collector();
+  it("rejects id and reports dead when the session ends without ever reporting one", async () => {
+    const { events, onEvent } = collector();
     const deps = { query: () => (async function* () {})() };
     const s = ClaudeSession.start(deps as any, {
       cwd: "C:\\proj",
@@ -214,5 +312,8 @@ describe("ClaudeSession", () => {
     });
     await s.done;
     await expect(s.id).rejects.toThrow();
+    // A silent stream end must still produce a terminal status, or the manifest
+    // shows the session as running forever.
+    expect(events).toEqual([{ kind: "session.status", sessionId: "", status: "dead", title: "hi" }]);
   });
 });
