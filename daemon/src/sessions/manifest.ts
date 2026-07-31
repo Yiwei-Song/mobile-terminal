@@ -43,6 +43,17 @@ export class Manifest {
     this.flush();
   }
 
+  // No CLI survives the daemon that spawned it, so every non-dead status on
+  // disk is a lie the moment we boot: `running`/`waiting_on_user` would show
+  // the phone phantom activity that interrupt cannot stop. Only `sessions.send`
+  // (which resumes) can revive one — which is exactly `idle`.
+  normalizeAfterRestart(): void {
+    for (const e of this.entries.values()) {
+      if (e.status !== "dead") e.status = "idle";
+    }
+    this.flush();
+  }
+
   remove(sessionId: string): void {
     this.entries.delete(sessionId);
     this.flush();

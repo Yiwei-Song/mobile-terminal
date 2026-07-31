@@ -12,6 +12,9 @@ import { Registry } from "./sessions/registry.js";
 // directory instead of the user's real %APPDATA%\workbench.
 const cfg = loadConfig(process.env["WORKBENCH_DATA_DIR"]);
 const manifest = new Manifest(cfg.dataDir);
+// A killed daemon leaves its live rows frozen as running/waiting_on_user. Clear
+// them before the registry (or any client) can read them back as real.
+manifest.normalizeAfterRestart();
 
 // ponytail: single-push-ref; event bus if the daemon grows. The registry is
 // built before the server (it *is* the server's handler), so its push starts as
