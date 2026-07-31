@@ -89,6 +89,7 @@ export const useWorkbench = create<Workbench>((set, get) => ({
       // Same pairing: keep the socket. connect() on a client that already has
       // one is a no-op, and on one waiting out a backoff it means "try now" —
       // which is exactly what the offline screen's Retry button asks for.
+      // opts are ignored here: they belong to the client this path is keeping.
       client.connect();
       return;
     }

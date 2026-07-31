@@ -55,17 +55,23 @@ export default function Home() {
     }, [connect]),
   );
 
+  // connect() on the pairing we are already on means "try now" to the client:
+  // it cancels the backoff and opens a socket immediately.
+  const retry = () => {
+    if (pairing === null || pairing === undefined) return;
+    connect(pairingUrl(pairing), pairing.token);
+  };
+
   const refresh = () => {
     setRefreshing(true);
+    // Pull-to-refresh is the instinctive gesture on a stale list, and while
+    // offline the list cannot recover without a socket — so nudge one first.
+    // The reconnect re-lists on its own; this refresh is what covers the online case.
+    if (connState === "offline") retry();
     // The rejection is already state (lastError) — the banner below reports it.
     void refreshSessions(true)
       .catch(() => {})
       .finally(() => setRefreshing(false));
-  };
-
-  const retry = () => {
-    if (pairing === null || pairing === undefined) return;
-    connect(pairingUrl(pairing), pairing.token);
   };
 
   if (pairing === undefined) return null;

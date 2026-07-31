@@ -172,6 +172,32 @@ describe("workbench store", () => {
     await again.close();
   });
 
+  // What Home's pull-to-refresh does while offline. Without the nudge a stale
+  // list could only recover by waiting out the backoff — the gesture the user
+  // reaches for first would do nothing visible.
+  it("recovers a stale list when a refresh nudges the connection", async () => {
+    const d = await startDaemon(idle());
+    // Long enough that only the explicit nudge can reconnect inside this test.
+    state().connect(d.url, d.token, { baseDelayMs: 60_000 });
+    await until("online", () => state().connState === "online");
+    await state().newSession("C:\\proj", "before the nap");
+    expect(state().sessions).toHaveLength(1);
+
+    await d.close();
+    await until("offline", () => state().connState === "offline");
+    // Deleted while we cannot see it: a stale render and a real re-list differ.
+    rmSync(join(d.dir, "sessions.json"));
+    const again = await startDaemon(idle(), { dir: d.dir, port: d.port });
+
+    state().connect(d.url, d.token, { baseDelayMs: 60_000 });
+    await state().refreshSessions(true).catch(() => {});
+
+    await until("back online", () => state().connState === "online");
+    await until("re-listed", () => state().sessions.length === 0);
+
+    await again.close();
+  });
+
   it("refuses to act while offline", async () => {
     const d = await startDaemon(idle());
     await online(d.url, d.token);

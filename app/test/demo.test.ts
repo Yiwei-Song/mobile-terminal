@@ -13,7 +13,7 @@ const load = async (flag?: string, variant?: string) => {
   vi.resetModules();
   const demo = await import("../src/lib/demo");
   const { useWorkbench } = await import("../src/lib/store");
-  return { ...demo, state: () => useWorkbench.getState() };
+  return { ...demo, useWorkbench, state: () => useWorkbench.getState() };
 };
 
 afterEach(() => {
@@ -66,6 +66,23 @@ describe("demo mode", () => {
     const un = await load("1", "unauthorized");
     un.seedDemo();
     expect(un.state().connState).toBe("unauthorized");
+  });
+
+  it("seeds once, and says so when the state flag is a typo", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { seedDemo, state, useWorkbench } = await load("1", "populatd");
+    seedDemo();
+    // A typo would otherwise be indistinguishable from the default story.
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(state().sessions.length).toBeGreaterThan(0);
+
+    // Home seeds on every focus: re-seeding would undo whatever the demo was
+    // showing — and would warn again on every one.
+    useWorkbench.setState({ sessions: [] });
+    seedDemo();
+    expect(state().sessions).toEqual([]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 });
 
