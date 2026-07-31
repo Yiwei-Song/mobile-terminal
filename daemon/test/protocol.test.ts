@@ -40,6 +40,18 @@ describe("protocol", () => {
     ).not.toBeNull();
   });
 
+  it("accepts config.get with no params and config.set with a topic or null", () => {
+    const req = (method: string, params?: unknown) =>
+      parseClientMsg(JSON.stringify({ type: "req", id: "1", method, params }));
+    expect(req("config.get")).toEqual({ type: "req", id: "1", method: "config.get" });
+    expect(req("config.set", { ntfyTopic: "wb-abc" })).not.toBeNull();
+    expect(req("config.set", { ntfyTopic: null })).not.toBeNull();
+    // Absent is not the same as null: only an explicit null clears the topic.
+    expect(req("config.set")).toBeNull();
+    expect(req("config.set", { ntfyTopic: 7 })).toBeNull();
+    expect(req("config.set", {})).toBeNull();
+  });
+
   it("rejects requests whose params do not match the method", () => {
     // Without this the returned value is typed as having params it does not have.
     expect(parseClientMsg(JSON.stringify({ type: "req", id: "1", method: "sessions.new" }))).toBeNull();

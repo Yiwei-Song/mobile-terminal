@@ -3,7 +3,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import qrcode from "qrcode-terminal";
 import { loadConfig } from "./config.js";
 import { startServer } from "./server.js";
-import { notify } from "./notify.js";
+import { notify, ntfyBody } from "./notify.js";
 import type { SessionEvent } from "./protocol.js";
 import { Manifest } from "./sessions/manifest.js";
 import { Registry } from "./sessions/registry.js";
@@ -20,17 +20,22 @@ manifest.normalizeAfterRestart();
 // built before the server (it *is* the server's handler), so its push starts as
 // a no-op and is filled in by the first request.
 let pushRef: (e: SessionEvent) => void = () => {};
-const registry = new Registry({ query }, manifest, (e) => {
-  pushRef(e);
-  // The two moments worth waking a phone for: a blocked session, and a finished one.
-  if (e.kind === "session.permission") notify(cfg.ntfyTopic, "Approval needed", e.summary);
-  // A raw uuid on a lock screen says nothing about which session finished; the
-  // manifest already holds the title the list shows, so read it back from there.
-  if (e.kind === "session.done") {
-    const title = manifest.list().find((s) => s.sessionId === e.sessionId)?.title;
-    notify(cfg.ntfyTopic, "Session finished", title || e.sessionId);
-  }
-});
+// A raw uuid on a lock screen says nothing about which session it is; the
+// manifest already holds the title the list shows, so read it back from there.
+const titleOf = (sessionId: string) =>
+  manifest.list().find((s) => s.sessionId === sessionId)?.title || sessionId;
+const registry = new Registry(
+  { query },
+  manifest,
+  (e) => {
+    pushRef(e);
+    // The two moments worth waking a phone for: a blocked session, and a finished one.
+    // cfg.ntfyTopic is read per event, so a config.set takes effect immediately.
+    if (e.kind === "session.permission") notify(cfg.ntfyTopic, "Workbench", ntfyBody("permission", titleOf(e.sessionId)));
+    if (e.kind === "session.done") notify(cfg.ntfyTopic, "Workbench", ntfyBody("done", titleOf(e.sessionId)));
+  },
+  cfg,
+);
 
 const srv = await startServer(cfg, (method, params, push) => {
   pushRef = push;

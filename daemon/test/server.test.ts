@@ -1,10 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
 import { loadConfig } from "../src/config.js";
 import { startServer } from "../src/server.js";
+import { VERSION } from "../src/version.js";
+import { Manifest } from "../src/sessions/manifest.js";
+import { Registry } from "../src/sessions/registry.js";
 
 const open = (port: number) => new WebSocket(`ws://127.0.0.1:${port}/ws`);
 const next = (ws: WebSocket) => new Promise<any>(r => ws.once("message", d => r(JSON.parse(d.toString()))));
@@ -121,6 +124,45 @@ describe("server", () => {
     const first = await startServer(cfgFor(), async () => null);
     await expect(startServer({ ...cfgFor(), port: first.port }, async () => null)).rejects.toThrow();
     await first.close();
+  });
+
+  it("round-trips config.get/config.set through a real registry", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "wb-"));
+    // The one object the server authenticates with, the registry answers from,
+    // and index.ts's notify closure reads — sharing it is what makes a topic
+    // change take effect without a restart.
+    const cfg = { ...loadConfig(dir), port: 0 };
+    const registry = new Registry({ query: () => (async function* () {})() } as any, new Manifest(dir), () => {}, cfg);
+    const srv = await startServer(cfg, (method, params) => registry.handle(method, params));
+
+    const ws = open(srv.port);
+    await opened(ws);
+    ws.send(JSON.stringify({ type: "auth", token: cfg.token }));
+    await next(ws);
+
+    const call = async (id: string, method: string, params?: unknown) => {
+      const res = next(ws);
+      ws.send(JSON.stringify({ type: "req", id, method, params }));
+      return (await res).data;
+    };
+
+    expect(await call("1", "config.get")).toEqual({ ntfyTopic: null, version: VERSION, hostname: hostname() });
+    expect(await call("2", "config.set", { ntfyTopic: "wb-abc" })).toEqual({
+      ntfyTopic: "wb-abc",
+      version: VERSION,
+      hostname: hostname(),
+    });
+    expect(await call("3", "config.get")).toMatchObject({ ntfyTopic: "wb-abc" });
+    expect(cfg.ntfyTopic).toBe("wb-abc");
+
+    const onDisk = JSON.parse(readFileSync(join(dir, "config.json"), "utf8"));
+    expect(onDisk).toMatchObject({ ntfyTopic: "wb-abc", token: cfg.token, port: 8790 });
+
+    expect(await call("4", "config.set", { ntfyTopic: null })).toMatchObject({ ntfyTopic: null });
+    expect(loadConfig(dir).ntfyTopic).toBeNull();
+
+    ws.close();
+    await srv.close();
   });
 
   it("serves the debug page at /", async () => {

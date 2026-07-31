@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { loadConfig } from "../src/config.js";
 import { Manifest } from "../src/sessions/manifest.js";
 import { Registry } from "../src/sessions/registry.js";
 import type { SessionEvent } from "../src/protocol.js";
@@ -9,8 +10,9 @@ import { init, result, tick, toolOpts } from "./fixtures.js";
 
 const setup = (query: unknown) => {
   const events: SessionEvent[] = [];
-  const manifest = new Manifest(mkdtempSync(join(tmpdir(), "wb-")));
-  const registry = new Registry({ query } as any, manifest, (e) => events.push(e));
+  const dir = mkdtempSync(join(tmpdir(), "wb-"));
+  const manifest = new Manifest(dir);
+  const registry = new Registry({ query } as any, manifest, (e) => events.push(e), loadConfig(dir));
   return { registry, manifest, events };
 };
 
@@ -212,6 +214,44 @@ describe("Registry", () => {
     const args = { cwd: "C:\\proj", prompt: "a prompt nobody wants as a title", title: "Deploy" };
     await registry.handle("sessions.new", args);
     expect(manifest.list()).toMatchObject([{ sessionId: "s1", title: "Deploy" }]);
+  });
+
+  it("echoes submitted user text so other clients see it", async () => {
+    const { registry, events } = setup((o: any) =>
+      (async function* () {
+        yield init;
+        await o.prompt[Symbol.asyncIterator]().next();
+        await new Promise<void>(() => {});
+      })(),
+    );
+    const text = (i: number) => events.filter((e) => e.kind === "session.text")[i];
+
+    await registry.handle("sessions.new", { cwd: "C:\\proj", prompt: "first" });
+    // Carries the real id: a client keying its transcript by session must be
+    // able to file the echo, so it cannot be pushed before `system.init`.
+    expect(text(0)).toEqual({ kind: "session.text", sessionId: "s1", role: "user", text: "first" });
+
+    await registry.handle("sessions.send", { sessionId: "s1", text: "second" });
+    expect(text(1)).toEqual({ kind: "session.text", sessionId: "s1", role: "user", text: "second" });
+    expect(events.filter((e) => e.kind === "session.text")).toHaveLength(2);
+  });
+
+  it("echoes a resumed send under the id the resume came back with", async () => {
+    const ids = ["s1", "s2"];
+    const { registry, events } = setup((o: any) =>
+      (async function* () {
+        yield { ...init, session_id: ids.shift()! };
+        await o.prompt[Symbol.asyncIterator]().next();
+        yield result;
+      })(),
+    );
+    await registry.handle("sessions.new", { cwd: "C:\\proj", prompt: "first" });
+    await until("session dead", () => events.some((e) => e.kind === "session.status" && e.status === "dead"));
+
+    await registry.handle("sessions.send", { sessionId: "s1", text: "again" });
+    // s2, not the s1 the phone asked for: the fork is the session that now owns
+    // the text, and the manifest row was re-keyed to match.
+    expect(events).toContainEqual({ kind: "session.text", sessionId: "s2", role: "user", text: "again" });
   });
 
   it("fails a permission left outstanding when the session dies", async () => {

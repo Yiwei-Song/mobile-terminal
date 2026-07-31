@@ -7,7 +7,9 @@ export type ClientMsg =
   | { type: "req"; id: string; method: "sessions.new"; params: { cwd: string; prompt: string; title?: string } }
   | { type: "req"; id: string; method: "sessions.send"; params: { sessionId: string; text: string } }
   | { type: "req"; id: string; method: "sessions.interrupt"; params: { sessionId: string } }
-  | { type: "req"; id: string; method: "sessions.approve"; params: { sessionId: string; requestId: string; allow: boolean } };
+  | { type: "req"; id: string; method: "sessions.approve"; params: { sessionId: string; requestId: string; allow: boolean } }
+  | { type: "req"; id: string; method: "config.get" }
+  | { type: "req"; id: string; method: "config.set"; params: { ntfyTopic: string | null } };
 
 // Daemon → client.
 export type ServerMsg =
@@ -26,6 +28,14 @@ export interface SessionRow {
   title: string;
   status: SessionStatus;
   updatedAt: string; // ISO
+}
+
+// The reply to both config.get and config.set — a set answers with the state it
+// produced, so the phone never has to ask twice.
+export interface ConfigInfo {
+  ntfyTopic: string | null;
+  version: string;
+  hostname: string;
 }
 
 export type SessionEvent =
@@ -47,6 +57,10 @@ const METHODS = new Map<string, (p: any) => boolean>([
   ["sessions.send", (p) => str(p?.sessionId) && str(p?.text)],
   ["sessions.interrupt", (p) => str(p?.sessionId)],
   ["sessions.approve", (p) => str(p?.sessionId) && str(p?.requestId) && typeof p?.allow === "boolean"],
+  ["config.get", () => true],
+  // Explicit null clears the topic; an absent key is a malformed request, not
+  // a silent "leave it alone" — the ClientMsg type promises the field is there.
+  ["config.set", (p) => p?.ntfyTopic === null || str(p?.ntfyTopic)],
 ]);
 
 export function parseClientMsg(raw: string): ClientMsg | null {

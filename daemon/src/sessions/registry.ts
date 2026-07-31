@@ -1,4 +1,7 @@
-import type { SessionEvent } from "../protocol.js";
+import { hostname } from "node:os";
+import type { ConfigInfo, SessionEvent } from "../protocol.js";
+import { setNtfyTopic, type Config } from "../config.js";
+import { VERSION } from "../version.js";
 import { ClaudeSession, type ClaudeDeps } from "./claude.js";
 import type { Manifest, ManifestEntry } from "./manifest.js";
 
@@ -18,6 +21,10 @@ export class Registry {
     private readonly deps: ClaudeDeps,
     private readonly manifest: Manifest,
     private readonly push: (e: SessionEvent) => void,
+    // ponytail: config lives here because the registry already *is* the server's
+    // request handler and config.* is two lines. A second handler object (and
+    // the composition in index.ts) would be more wiring than it answers.
+    private readonly cfg: Config,
   ) {}
 
   // Throwing is the error channel: startServer turns it into { ok: false, error }.
@@ -30,22 +37,34 @@ export class Registry {
         const s = this.start({ cwd: params.cwd, prompt: params.prompt, title: params.title });
         // Rejects if the CLI died before `system.init`, which is exactly the
         // answer the phone needs — there is no session to talk to.
-        return { sessionId: await s.id };
+        const sessionId = await s.id;
+        this.echo(sessionId, params.prompt);
+        return { sessionId };
       }
 
       case "sessions.send": {
         const live = this.live.get(params.sessionId);
         if (live) {
           live.send(params.text);
+          this.echo(params.sessionId, params.text);
           return {};
         }
         // Stopped but known: restart the CLI with --resume and let the text be
         // the prompt. Awaited so a second send finds it live instead of
         // starting a duplicate. Plan 5's boot-resume calls this same path.
         const prev = this.entry(params.sessionId);
-        await this.start({ cwd: prev.cwd, prompt: params.text, title: prev.title, resume: prev.sessionId }).id;
+        // The resume can come back under a forked id, so echo the id the CLI
+        // actually reported — not the one the phone asked for.
+        this.echo(await this.start({ cwd: prev.cwd, prompt: params.text, title: prev.title, resume: prev.sessionId }).id, params.text);
         return {};
       }
+
+      case "config.get":
+        return this.configInfo();
+
+      case "config.set":
+        setNtfyTopic(this.cfg, params.ntfyTopic);
+        return this.configInfo();
 
       case "sessions.interrupt": {
         const live = this.live.get(params.sessionId);
@@ -72,6 +91,19 @@ export class Registry {
       default:
         throw new Error(`unknown method: ${method}`);
     }
+  }
+
+  // The transcript is only assembled from pushed events, so text nobody echoes
+  // is text a second phone never sees. Broadcast, so the sender gets it back
+  // too — de-duping its own optimistic line is the client's business.
+  private echo(sessionId: string, text: string): void {
+    this.push({ kind: "session.text", sessionId, role: "user", text });
+  }
+
+  // ntfyTopic may be absent from a hand-edited config.json; the wire type says
+  // string | null, so normalize rather than send undefined (which JSON drops).
+  private configInfo(): ConfigInfo {
+    return { ntfyTopic: this.cfg.ntfyTopic ?? null, version: VERSION, hostname: hostname() };
   }
 
   private entry(sessionId: string): ManifestEntry {

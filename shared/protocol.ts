@@ -4,6 +4,7 @@
 // build time, so Metro never resolves across the repo root at runtime.
 export type {
   ClientMsg,
+  ConfigInfo,
   ServerMsg,
   SessionStatus,
   SessionEvent,

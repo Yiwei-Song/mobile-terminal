@@ -29,3 +29,15 @@ export function loadConfig(dir?: string): Config {
   }
   return { ...raw, dataDir };
 }
+
+// The one setting the phone can change. Mutates cfg as well as the file: the
+// daemon's notify closure reads cfg on every event, so a disk-only write would
+// need a restart to take effect. Re-reads the file rather than serializing our
+// own Config — that would write dataDir into it and could clobber a token or
+// port edited since load.
+export function setNtfyTopic(cfg: Config, ntfyTopic: string | null): void {
+  cfg.ntfyTopic = ntfyTopic;
+  const file = join(cfg.dataDir, "config.json");
+  const raw = JSON.parse(readFileSync(file, "utf8"));
+  writeFileSync(file, JSON.stringify({ ...raw, ntfyTopic }, null, 2));
+}
