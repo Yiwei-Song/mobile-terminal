@@ -3,7 +3,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import qrcode from "qrcode-terminal";
 import { loadConfig } from "./config.js";
 import { startServer } from "./server.js";
-import { notify, ntfyBody } from "./notify.js";
+import { notify, ntfyFor } from "./notify.js";
 import type { SessionEvent } from "./protocol.js";
 import { Manifest } from "./sessions/manifest.js";
 import { Registry } from "./sessions/registry.js";
@@ -29,10 +29,9 @@ const registry = new Registry(
   manifest,
   (e) => {
     pushRef(e);
-    // The two moments worth waking a phone for: a blocked session, and a finished one.
     // cfg.ntfyTopic is read per event, so a config.set takes effect immediately.
-    if (e.kind === "session.permission") notify(cfg.ntfyTopic, "Workbench", ntfyBody("permission", titleOf(e.sessionId)));
-    if (e.kind === "session.done") notify(cfg.ntfyTopic, "Workbench", ntfyBody("done", titleOf(e.sessionId)));
+    const n = ntfyFor(e, titleOf(e.sessionId));
+    if (n) notify(cfg.ntfyTopic, n.title, n.body);
   },
   cfg,
 );

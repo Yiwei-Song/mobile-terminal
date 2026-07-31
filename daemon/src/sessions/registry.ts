@@ -96,6 +96,10 @@ export class Registry {
   // The transcript is only assembled from pushed events, so text nobody echoes
   // is text a second phone never sees. Broadcast, so the sender gets it back
   // too — de-duping its own optimistic line is the client's business.
+  // Ordering: callers await the CLI's real session id before echoing, so an
+  // assistant event could in theory be pushed ahead of the prompt that caused
+  // it. Accepted — the CLI reads the prompt before it replies, so the window is
+  // the id round-trip and nothing has been observed landing inside it.
   private echo(sessionId: string, text: string): void {
     this.push({ kind: "session.text", sessionId, role: "user", text });
   }

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 
@@ -19,7 +19,7 @@ export function loadConfig(dir?: string): Config {
       port: 8790,
       ntfyTopic: null,
     };
-    writeFileSync(file, JSON.stringify(fresh, null, 2));
+    writeConfig(file, fresh);
   }
   const raw = JSON.parse(readFileSync(file, "utf8"));
   // A truncated/edited config.json would give token: undefined, and an auth check
@@ -30,14 +30,26 @@ export function loadConfig(dir?: string): Config {
   return { ...raw, dataDir };
 }
 
+// Write-then-rename: this file holds the pairing token, and a torn write would
+// leave JSON that loadConfig throws on — unpairing the phone for good.
+function writeConfig(file: string, data: unknown): void {
+  const tmp = `${file}.tmp`;
+  writeFileSync(tmp, JSON.stringify(data, null, 2));
+  renameSync(tmp, file);
+}
+
 // The one setting the phone can change. Mutates cfg as well as the file: the
 // daemon's notify closure reads cfg on every event, so a disk-only write would
 // need a restart to take effect. Re-reads the file rather than serializing our
 // own Config — that would write dataDir into it and could clobber a token or
 // port edited since load.
 export function setNtfyTopic(cfg: Config, ntfyTopic: string | null): void {
-  cfg.ntfyTopic = ntfyTopic;
+  // "" is not a topic — it would post to https://ntfy.sh/ and read as configured.
+  const topic = ntfyTopic || null;
   const file = join(cfg.dataDir, "config.json");
   const raw = JSON.parse(readFileSync(file, "utf8"));
-  writeFileSync(file, JSON.stringify({ ...raw, ntfyTopic }, null, 2));
+  writeConfig(file, { ...raw, ntfyTopic: topic });
+  // After the write, not before: a failed persist must not leave the running
+  // daemon pushing to a topic that no restart would remember.
+  cfg.ntfyTopic = topic;
 }

@@ -34,6 +34,15 @@ describe("config", () => {
     expect(loadConfig(dir).token).toBe(cfg.token);
   });
 
+  it("collapses an empty topic to null instead of storing it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "wb-"));
+    const cfg = loadConfig(dir);
+    setNtfyTopic(cfg, "");
+    // "" would post to https://ntfy.sh/ and report back as configured.
+    expect(cfg.ntfyTopic).toBeNull();
+    expect(loadConfig(dir).ntfyTopic).toBeNull();
+  });
+
   it("throws on a config with no token instead of returning undefined", () => {
     const dir = mkdtempSync(join(tmpdir(), "wb-"));
     writeFileSync(join(dir, "config.json"), '{"port":8790}');
