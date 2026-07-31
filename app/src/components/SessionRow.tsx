@@ -26,7 +26,9 @@ export function SessionRow({ session }: { session: Session }) {
     >
       <Card accentEdge={waiting ? "warn" : undefined} raised={waiting} style={styles.card}>
         <View style={styles.line}>
-          <Text variant="body" numberOfLines={1} style={styles.title}>
+          {/* The row that needs the user is the one that can least afford to
+              truncate: give the waiting title a second line, others stay at one. */}
+          <Text variant="body" numberOfLines={waiting ? 2 : 1} style={styles.title}>
             {session.title}
           </Text>
           <Text variant="sub" color="textMut" numberOfLines={1} style={styles.time}>

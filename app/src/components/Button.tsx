@@ -64,7 +64,11 @@ export function Button({
 }: ButtonProps) {
   const fade = useRef(new Animated.Value(opacity.full)).current;
   const inert = disabled || loading;
-  const role = labelColorFor[variant];
+  // Disabled (but not merely loading) gets a neutral greyed surface and a
+  // textMut label — clearly off, yet still legible. A dimmed variant color sank
+  // the label near the contrast floor; textMut is ≥4.5:1 on surface.
+  const greyed = disabled && !loading;
+  const role: ColorRole = greyed ? "textMut" : labelColorFor[variant];
 
   // Going inert mid-press swallows onPressOut (the Pressable is disabled before
   // it fires), which would strand `fade` at pressed and show a 60% button once
@@ -81,14 +85,14 @@ export function Button({
     }).start();
 
   return (
-    <Animated.View style={[fill && styles.fill, { opacity: inert ? opacity.disabled : fade }]}>
+    <Animated.View style={[fill && styles.fill, { opacity: greyed ? opacity.full : loading ? opacity.disabled : fade }]}>
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ disabled: inert, busy: loading }}
         disabled={inert}
         onPressIn={() => animate(opacity.pressed)}
         onPressOut={() => animate(opacity.full)}
-        style={[styles.base, surfaceFor[variant], style]}
+        style={[styles.base, greyed ? styles.greyed : surfaceFor[variant], style]}
         {...rest}
       >
         <View style={styles.row}>
@@ -113,6 +117,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: space(5),
     borderRadius: radius.pill,
   },
+  greyed: { backgroundColor: color.surface, borderWidth: stroke.hairline, borderColor: color.border },
   fill: { flex: 1 },
   row: {
     flexDirection: "row",

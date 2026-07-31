@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { router } from "expo-router";
-import { ArrowLeft, Play } from "lucide-react-native";
+import { Play, Wifi } from "lucide-react-native";
 
+import { BackButton } from "../src/components/BackButton";
 import { Button } from "../src/components/Button";
 import { Card } from "../src/components/Card";
 import { Field } from "../src/components/Field";
@@ -10,9 +11,10 @@ import { MonoText } from "../src/components/MonoText";
 import { Screen } from "../src/components/Screen";
 import { Text } from "../src/components/Text";
 import { demoMode, seedDemo } from "../src/lib/demo";
+import { loadPairing, pairingUrl } from "../src/lib/pairing";
 import { loadRecents, pushRecent } from "../src/lib/recents";
 import { useWorkbench } from "../src/lib/store";
-import { color, icon as iconSize, opacity, radius, space, stroke, touch, tracking } from "../src/theme";
+import { color, opacity, radius, space, stroke, touch, tracking } from "../src/theme";
 
 // Two folders so the empty-with-recents state has something to render in demo;
 // storage is empty in a web preview.
@@ -26,6 +28,7 @@ const DEMO_RECENTS = ["D:\\projects\\api-server", "C:\\Users\\yiwei\\notes"];
 export default function NewSession() {
   const connState = useWorkbench((s) => s.connState);
   const newSession = useWorkbench((s) => s.newSession);
+  const connect = useWorkbench((s) => s.connect);
 
   const [cwd, setCwd] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -47,6 +50,14 @@ export default function NewSession() {
   const offline = connState !== "online";
   const canStart = cwd.trim() !== "" && prompt.trim() !== "" && !offline;
 
+  // Same "try now" the Home screen offers: connect() on the pairing we are
+  // already on cancels the backoff and opens a socket immediately.
+  const retry = () => {
+    void loadPairing().then((p) => {
+      if (p !== null) connect(pairingUrl(p), p.token);
+    });
+  };
+
   const start = async () => {
     setErr(null);
     setStarting(true);
@@ -67,14 +78,7 @@ export default function NewSession() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-          onPress={() => router.back()}
-          style={({ pressed }) => [styles.iconBtn, pressed && { opacity: opacity.pressed }]}
-        >
-          <ArrowLeft size={iconSize.lg} color={color.text} strokeWidth={stroke.icon} />
-        </Pressable>
+        <BackButton />
         <Text variant="h2" numberOfLines={1} style={styles.grow}>
           New session
         </Text>
@@ -136,11 +140,10 @@ export default function NewSession() {
         </ScrollView>
 
         <View style={styles.footer}>
-          <Button label="Start session" icon={Play} fill loading={starting} disabled={!canStart} onPress={() => void start()} />
-          {offline && (
-            <Text variant="sub" color="textMut" style={styles.footerHint}>
-              Reconnect to start a session.
-            </Text>
+          {offline ? (
+            <Button label="Reconnect to start a session" variant="outline" icon={Wifi} fill onPress={retry} />
+          ) : (
+            <Button label="Start session" icon={Play} fill loading={starting} disabled={!canStart} onPress={() => void start()} />
           )}
         </View>
       </KeyboardAvoidingView>
@@ -148,8 +151,8 @@ export default function NewSession() {
   );
 }
 
-// Codex is here so the choice is visible, but it lands in Plan 3 — disabled with
-// a badge rather than hidden, so the app reads as "more coming" not "this is all".
+// Codex is here so the choice is visible, but it is not shipped yet — disabled
+// with a "Soon" badge rather than hidden, so the app reads as "more coming".
 function AgentSelect() {
   return (
     <View style={styles.agentWrap}>
@@ -168,7 +171,7 @@ function AgentSelect() {
           </Text>
           <View style={styles.badge}>
             <Text variant="sub" color="textMut">
-              Plan 3
+              Soon
             </Text>
           </View>
         </View>
@@ -180,7 +183,6 @@ function AgentSelect() {
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   header: { flexDirection: "row", alignItems: "center", gap: space(2), paddingTop: space(2), paddingBottom: space(3) },
-  iconBtn: { width: touch.min, height: touch.min, alignItems: "center", justifyContent: "center", marginVertical: -space(2) },
   grow: { flex: 1 },
   scroll: { gap: space(4), paddingTop: space(1), paddingBottom: space(4) },
 
@@ -219,5 +221,4 @@ const styles = StyleSheet.create({
   },
 
   footer: { paddingVertical: space(3), gap: space(2) },
-  footerHint: { textAlign: "center" },
 });

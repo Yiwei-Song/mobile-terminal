@@ -74,15 +74,14 @@ export function ApprovalCard({
         </View>
 
         {/* The command is the thing being decided: full-strength text, not muted.
-            Wraps on its own newlines, scrolls sideways for a long line, and caps
-            at ~6 lines before scrolling inside — never clipped. */}
+            Every character must be reachable, so long lines WRAP — never a
+            horizontal clip. Caps at ~8 wrapped lines before scrolling inside so
+            the card never eats the transcript. */}
         <View style={styles.codeBox}>
           <ScrollView style={styles.codeScroll} showsVerticalScrollIndicator nestedScrollEnabled>
-            <ScrollView horizontal showsHorizontalScrollIndicator>
-              <MonoText color="text" style={styles.code}>
-                {approval.summary}
-              </MonoText>
-            </ScrollView>
+            <MonoText color="text" style={styles.code}>
+              {approval.summary}
+            </MonoText>
           </ScrollView>
         </View>
 
@@ -121,9 +120,9 @@ const styles = StyleSheet.create({
     borderWidth: stroke.hairline,
     borderColor: color.border,
   },
-  // Six mono lines before it scrolls internally: enough to read most commands
-  // whole, capped so the card never eats the transcript.
-  codeScroll: { maxHeight: typeScale.mono.lineHeight * 6 + space(4) },
+  // Eight wrapped mono lines before it scrolls internally: enough to read most
+  // commands whole, capped so the card never eats the transcript.
+  codeScroll: { maxHeight: typeScale.mono.lineHeight * 8 + space(4) },
   code: { padding: space(3) },
   buttons: { flexDirection: "row", gap: space(3) },
 });

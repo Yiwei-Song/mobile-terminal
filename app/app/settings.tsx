@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { router } from "expo-router";
 import Constants from "expo-constants";
-import { ArrowLeft, ChevronRight, Dices, ShieldAlert } from "lucide-react-native";
+import { ChevronRight, Dices } from "lucide-react-native";
 
+import { BackButton } from "../src/components/BackButton";
 import { Button } from "../src/components/Button";
 import { Card } from "../src/components/Card";
 import { Field } from "../src/components/Field";
 import { MonoText } from "../src/components/MonoText";
+import { Notice } from "../src/components/Notice";
 import { Screen } from "../src/components/Screen";
 import { Text } from "../src/components/Text";
 import { clearPairing, loadPairing, webInsecureStorage, type Pairing } from "../src/lib/pairing";
@@ -71,7 +73,7 @@ export default function Settings() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Button label="Back" variant="ghost" icon={ArrowLeft} onPress={() => router.back()} />
+        <BackButton />
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
@@ -135,7 +137,7 @@ export default function Settings() {
                   setTopic(v);
                   setSaved(false);
                 }}
-                placeholder="off"
+                placeholder="not set — tap Generate"
                 editable={machine !== null}
                 mono
               />
@@ -152,7 +154,7 @@ export default function Settings() {
                 setSaved(false);
               }}
             />
-            <Button label="Save" loading={saving} disabled={machine === null} onPress={() => void save()} />
+            <Button label="Save" fill loading={saving} disabled={machine === null} onPress={() => void save()} />
           </View>
           {saved && (
             <Text variant="sub" color="accent" style={styles.value}>
@@ -172,20 +174,10 @@ export default function Settings() {
         </Card>
 
         {webInsecureStorage && (
-          <Card accentEdge="warn">
-            <View style={styles.rowBetween}>
-              <ShieldAlert size={iconSize.lg} color={color.warn} strokeWidth={stroke.icon} />
-              <View style={styles.grow}>
-                <Text variant="sub" color="warn">
-                  Web preview storage
-                </Text>
-                <Text variant="body" color="textMut" style={styles.value}>
-                  This browser has no keystore, so the pairing token sits in localStorage — less secure than the Android
-                  build, which uses the device keystore.
-                </Text>
-              </View>
-            </View>
-          </Card>
+          <Notice
+            title="Web preview storage"
+            body="This browser has no keystore, so the pairing token sits in localStorage — less secure than the phone build, which uses the device keystore."
+          />
         )}
 
         <Card>
@@ -218,7 +210,7 @@ export default function Settings() {
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: "row", paddingTop: space(2), marginLeft: -space(5) },
+  header: { flexDirection: "row", paddingTop: space(2) },
   scroll: { gap: space(3), paddingTop: space(2), paddingBottom: space(4) },
   value: { marginTop: space(1) },
   center: { textAlign: "center" },

@@ -76,6 +76,10 @@ export default function Home() {
 
   if (pairing === undefined) return null;
 
+  // A session can only be started against a live (or connecting) PC. Offline or
+  // token-rejected, the FAB is dimmed and inert rather than a dead-ending promise.
+  const canStart = connState === "online" || connState === "connecting";
+
   return (
     <Screen>
       <MachineBar />
@@ -110,12 +114,20 @@ export default function Home() {
         }
       />
 
-      {/* Thumb-reachable, and the only primary action on the screen. */}
+      {/* Thumb-reachable, and the only primary action on the screen. Dimmed and
+          inert when there is no live PC to start a session on — a disabled FAB
+          tells the truth where an enabled one would promise an action that fails. */}
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="New session"
+        accessibilityState={{ disabled: !canStart }}
+        disabled={!canStart}
         onPress={() => router.push("/new")}
-        style={({ pressed }) => [styles.fab, pressed && { opacity: opacity.pressed }]}
+        style={({ pressed }) => [
+          styles.fab,
+          !canStart && { opacity: opacity.disabled },
+          canStart && pressed && { opacity: opacity.pressed },
+        ]}
       >
         <Plus size={iconSize.lg} color={color.accentText} />
       </Pressable>
@@ -151,8 +163,7 @@ function Empty({ connState, onRetry }: { connState: ConnState; onRetry: () => vo
       <EmptyState
         icon={TerminalSquare}
         title="No sessions yet"
-        body="Start one — tap +, pick a folder on your PC and say what you want done."
-        action={<Button label="New session" icon={Plus} onPress={() => router.push("/new")} />}
+        body="Start one — tap the + button, pick a folder on your PC and say what you want done."
       />
     );
   return null;

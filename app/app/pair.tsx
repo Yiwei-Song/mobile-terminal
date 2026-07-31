@@ -8,6 +8,7 @@ import { Button } from "../src/components/Button";
 import { Card } from "../src/components/Card";
 import { Field } from "../src/components/Field";
 import { MonoText } from "../src/components/MonoText";
+import { Notice } from "../src/components/Notice";
 import { Screen } from "../src/components/Screen";
 import { Text } from "../src/components/Text";
 import { loadPairing, parsePairing, savePairing, verify, webInsecureStorage, type Pairing } from "../src/lib/pairing";
@@ -190,7 +191,7 @@ export default function Pair() {
               label="Host"
               value={host}
               onChangeText={setHost}
-              placeholder="192.168.1.24"
+              placeholder="e.g. 192.168.1.24"
               keyboardType="url"
               inputMode="url"
               mono
@@ -227,10 +228,10 @@ export default function Pair() {
         )}
 
         {webInsecureStorage && (
-          <Text variant="sub" color="warn">
-            Web preview: the token is stored in this browser's localStorage, which is less secure than the phone's
-            keystore.
-          </Text>
+          <Notice
+            title="Web preview storage"
+            body="This browser has no keystore, so the pairing token sits in localStorage — less secure than the phone build, which uses the device keystore."
+          />
         )}
       </ScrollView>
 
@@ -243,25 +244,28 @@ export default function Pair() {
           </>
         ) : mode === "manual" ? (
           <>
-            <Button label={busy ? "Connecting…" : "Connect"} loading={busy} fill onPress={submitManual} />
+            <Button
+              label={busy ? "Connecting…" : "Connect"}
+              loading={busy}
+              disabled={host.trim() === "" || token.trim() === ""}
+              fill
+              onPress={submitManual}
+            />
             {CAN_SCAN && <Button label="Scan QR instead" variant="ghost" icon={Camera} onPress={() => void startScan()} />}
           </>
-        ) : (
+        ) : CAN_SCAN ? (
           <>
-            <Button
-              label="Scan QR code"
-              icon={Camera}
-              fill
-              disabled={!CAN_SCAN || busy}
-              loading={busy}
-              onPress={() => void startScan()}
-            />
-            {!CAN_SCAN && (
-              <Text variant="sub" color="textMut" style={styles.center}>
-                No camera in the browser — use manual entry.
-              </Text>
-            )}
+            <Button label="Scan QR code" icon={Camera} fill loading={busy} onPress={() => void startScan()} />
             <Button label="Enter manually" variant="ghost" icon={Keyboard} onPress={() => setMode("manual")} />
+          </>
+        ) : (
+          // No camera in a web preview: the real action is manual entry, so it
+          // gets the primary slot rather than a disabled Scan button as the hero.
+          <>
+            <Button label="Enter manually" icon={Keyboard} fill onPress={() => setMode("manual")} />
+            <Text variant="sub" color="textMut" style={styles.center}>
+              No camera in the browser — enter the host, port and token by hand.
+            </Text>
           </>
         )}
       </View>

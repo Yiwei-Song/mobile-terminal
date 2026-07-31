@@ -10,9 +10,10 @@ import {
   type NativeSyntheticEvent,
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
-import { ArrowDown, ArrowLeft, MessageSquare, StopCircle, WifiOff } from "lucide-react-native";
+import { ArrowDown, MessageSquare, StopCircle, WifiOff } from "lucide-react-native";
 
 import { ApprovalCard } from "../../src/components/ApprovalCard";
+import { BackButton } from "../../src/components/BackButton";
 import { Button } from "../../src/components/Button";
 import { Card } from "../../src/components/Card";
 import { Composer } from "../../src/components/Composer";
@@ -59,14 +60,7 @@ export default function SessionScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-          onPress={() => router.back()}
-          style={({ pressed }) => [styles.iconBtn, pressed && { opacity: opacity.pressed }]}
-        >
-          <ArrowLeft size={iconSize.lg} color={color.text} strokeWidth={stroke.icon} />
-        </Pressable>
+        <BackButton />
         <View style={styles.headText}>
           <Text variant="h2" numberOfLines={1}>
             {session?.title ?? "Session"}
@@ -101,8 +95,8 @@ export default function SessionScreen() {
           {data.length === 0 ? (
             <EmptyState
               icon={MessageSquare}
-              title="Waiting for the first response…"
-              body="Your prompt is on its way to the agent. Its reply lands here."
+              title="No messages yet"
+              body="Anything you and the agent say in this session shows up here."
             />
           ) : (
             <>
