@@ -126,6 +126,13 @@ export class Registry {
     // A terminal event can carry an empty id (the CLI died before `system.init`),
     // so adopt the event's id only when it actually has one.
     if (e.sessionId && e.sessionId !== entry.sessionId) {
+      // A resume can come back under a fresh id (the CLI forked the transcript).
+      // Drop the old key or the manifest keeps a row the phone can never resume
+      // and the live map keeps a handle nothing will ever delete.
+      if (entry.sessionId) {
+        this.manifest.remove(entry.sessionId);
+        if (this.live.get(entry.sessionId) === session) this.live.delete(entry.sessionId);
+      }
       entry.sessionId = e.sessionId;
       this.live.set(e.sessionId, session);
     }

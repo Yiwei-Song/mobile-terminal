@@ -108,6 +108,24 @@ describe("Registry", () => {
     expect(manifest.list()).toMatchObject([{ sessionId: "s1", title: "first" }]);
   });
 
+  it("re-keys the row when a resume comes back under a fresh session id", async () => {
+    const ids = ["s1", "s2"];
+    const { registry, manifest } = setup((o: any) =>
+      (async function* () {
+        yield { ...init, session_id: ids.shift()! };
+        await o.prompt[Symbol.asyncIterator]().next();
+        yield result;
+      })(),
+    );
+    await registry.handle("sessions.new", { cwd: "C:\\proj", prompt: "first" });
+    await until("session dead", () => manifest.list()[0]?.status === "dead");
+
+    await registry.handle("sessions.send", { sessionId: "s1", text: "again" });
+    // One row, not two: the forked id replaces the one it resumed, so the phone
+    // is never offered a session id the CLI has abandoned.
+    expect(manifest.list()).toMatchObject([{ sessionId: "s2", title: "first" }]);
+  });
+
   it("throws unknown session for an id in neither the live map nor the manifest", async () => {
     const { registry } = setup(() => (async function* () {})());
     await expect(registry.handle("sessions.send", { sessionId: "nope", text: "hi" })).rejects.toThrow("unknown session");
