@@ -126,7 +126,7 @@ describe("server", () => {
   it("pings authed sockets, keeps the answering one and terminates the silent one", async () => {
     const cfg = cfgFor();
     // Same shape as production, three orders of magnitude faster.
-    const srv = await startServer(cfg, async () => null, { pingMs: 25, pongMs: 25 });
+    const srv = await startServer(cfg, async () => null, { pingMs: 25, pongMs: 15 });
 
     const live = openDeaf(srv.port), deaf = openDeaf(srv.port);
     // live answers by hand; deaf never does. Both sockets are otherwise identical,

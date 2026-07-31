@@ -65,13 +65,14 @@ export function startServer(cfg: Config, handler: RequestHandler, opts: ServerOp
       // answers this — React Native's and the browser's WebSocket both reply to
       // pings in the runtime, below any JS we could write.
       let alive = true;
+      let deadline: NodeJS.Timeout | undefined;
       ws.on("pong", () => { alive = true; });
       const ping = setInterval(() => {
         alive = false;
         ws.ping();
-        setTimeout(() => { if (!alive) ws.terminate(); }, pongMs);
+        deadline = setTimeout(() => { if (!alive) ws.terminate(); }, pongMs);
       }, pingMs);
-      ws.on("close", () => { authed.delete(ws); clearInterval(ping); });
+      ws.on("close", () => { authed.delete(ws); clearInterval(ping); clearTimeout(deadline); });
       send(ws, { type: "auth.ok", version: VERSION });
       ws.on("message", async (r) => {
         const msg = parseClientMsg(r.toString());

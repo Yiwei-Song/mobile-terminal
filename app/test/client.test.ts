@@ -151,9 +151,12 @@ describe("WorkbenchClient", () => {
     await until("three retries", () => at.length >= 4);
 
     const gaps = at.slice(1).map((t, i) => t - at[i]!);
-    // Exact ratio is 2; the floor is loose because the refusal overhead lands in
-    // the smaller gap and CI's timers are not a metronome. A fixed delay is 1.
-    for (let i = 1; i < gaps.length; i++) expect(gaps[i]!).toBeGreaterThan(gaps[i - 1]! * 1.5);
+    // gaps[0] spans the daemon shutdown, so close latency lands in it and it is
+    // not a backoff measurement. Every later gap is its scheduled delay plus a
+    // connect refusal, and that additive overhead drags a gap-to-gap ratio under
+    // 2 — so check the full 2x against the schedule (80, 160, ...) instead.
+    // A fixed delay stalls at 40 and fails the first check.
+    for (let i = 1; i < gaps.length; i++) expect(gaps[i]!).toBeGreaterThanOrEqual(40 * 2 ** i);
 
     client.close();
   });

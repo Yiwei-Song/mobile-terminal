@@ -200,7 +200,7 @@ export const useWorkbench = create<Workbench>((set, get) => ({
   },
 
   async interrupt(sessionId) {
-    await must().request("sessions.interrupt", { sessionId });
+    await track(must().request("sessions.interrupt", { sessionId }));
   },
 
   async approve(sessionId, requestId, allow) {
