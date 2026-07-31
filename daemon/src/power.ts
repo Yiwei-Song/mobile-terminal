@@ -63,17 +63,36 @@ export function lockWorkstation(deps: PowerDeps): Promise<void> {
   return run(deps, "rundll32.exe user32.dll,LockWorkStation");
 }
 
-export function displayOff(deps: PowerDeps): Promise<void> {
-  // Broadcast a monitor-power-off request:
-  //   SendMessage(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, 2)
+// P/Invoke script for a monitor-power-off broadcast:
+//   PostMessage(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, 2)
+// PostMessage (not SendMessage) so an unresponsive top-level window can't stall
+// the broadcast — this is fire-and-forget, we don't need the return value.
+export const displayOffScript = ((): string => {
   const HWND_BROADCAST = 0xffff;
   const WM_SYSCOMMAND = 0x0112;
   const SC_MONITORPOWER = 0xf170;
   const MONITOR_OFF = 2; // 2=off, 1=low power, -1=on
-  const script =
-    `Add-Type -Name D -Namespace W -MemberDefinition '[DllImport("user32.dll")] public static extern int SendMessage(int h, int m, int w, int l);'; ` +
-    `[W.D]::SendMessage(${HWND_BROADCAST}, ${WM_SYSCOMMAND}, ${SC_MONITORPOWER}, ${MONITOR_OFF})`;
-  return run(deps, `powershell -NoProfile -Command "${script}"`);
+  return (
+    `Add-Type -Name D -Namespace W -MemberDefinition '[DllImport("user32.dll")] public static extern bool PostMessage(int h, int m, int w, int l);'; ` +
+    `[W.D]::PostMessage(${HWND_BROADCAST}, ${WM_SYSCOMMAND}, ${SC_MONITORPOWER}, ${MONITOR_OFF})`
+  );
+})();
+
+export function displayOff(deps: PowerDeps): Promise<void> {
+  // spawn with an args ARRAY (like KeepAwake): Node quotes each arg, so the
+  // inner "user32.dll" quotes survive intact. Building one cmd string + exec
+  // collides the nested quotes under cmd.exe and Add-Type throws.
+  return new Promise((resolve, reject) => {
+    const child = deps.spawn(
+      "powershell",
+      ["-NoProfile", "-Command", displayOffScript],
+      { windowsHide: true },
+    );
+    child.on("exit", (code) =>
+      code === 0 ? resolve() : reject(new Error(`displayOff exited ${code}`)),
+    );
+    child.on("error", reject);
+  });
 }
 
 export function reboot(deps: PowerDeps, delaySec: number): Promise<void> {

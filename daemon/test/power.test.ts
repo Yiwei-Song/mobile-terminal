@@ -7,12 +7,14 @@ import type { PowerDeps } from "../src/power.js";
 // are stored so a test can simulate the child dying on its own.
 function fakeSpawn() {
   const calls: { cmd: string; args: string[] }[] = [];
-  let exitHandler: (() => void) | null = null;
+  let exitHandler: ((code: number) => void) | null = null;
+  let errorHandler: ((err: unknown) => void) | null = null;
   const child = {
     pid: 4242,
     kill: vi.fn(),
-    on: (ev: string, cb: () => void) => {
-      if (ev === "exit") exitHandler = cb;
+    on: (ev: string, cb: (arg: never) => void) => {
+      if (ev === "exit") exitHandler = cb as (code: number) => void;
+      if (ev === "error") errorHandler = cb as (err: unknown) => void;
       return child;
     },
   };
@@ -20,7 +22,13 @@ function fakeSpawn() {
     calls.push({ cmd, args });
     return child;
   }) as unknown as PowerDeps["spawn"];
-  return { spawn, calls, child, fireExit: () => exitHandler?.() };
+  return {
+    spawn,
+    calls,
+    child,
+    fireExit: (code = 0) => exitHandler?.(code),
+    fireError: (err: unknown) => errorHandler?.(err),
+  };
 }
 
 // Fake exec: never runs a shell — records the command string and invokes the
@@ -92,22 +100,47 @@ describe("KeepAwake", () => {
   });
 });
 
+describe("displayOff spawns powershell with an intact args array", () => {
+  it("passes the P/Invoke script with inner \"user32.dll\" quotes preserved", async () => {
+    const s = fakeSpawn();
+    const p = displayOff(depsWith({ spawn: s.spawn }));
+    s.fireExit(0); // child exits cleanly -> resolve
+    await expect(p).resolves.toBeUndefined();
+
+    expect(s.calls).toHaveLength(1);
+    expect(s.calls[0].cmd).toBe("powershell");
+    // Exact arg array — a quoting regression (collapsed inner quotes, a single
+    // fused cmd string, wrong flags) fails here instead of slipping through.
+    expect(s.calls[0].args).toEqual([
+      "-NoProfile",
+      "-Command",
+      'Add-Type -Name D -Namespace W -MemberDefinition \'[DllImport("user32.dll")] public static extern bool PostMessage(int h, int m, int w, int l);\'; ' +
+        "[W.D]::PostMessage(65535, 274, 61808, 2)",
+    ]);
+    // Belt-and-suspenders: the inner quotes really are literal double-quotes.
+    expect(s.calls[0].args[2]).toContain('[DllImport("user32.dll")]');
+  });
+
+  it("rejects when the child exits nonzero", async () => {
+    const s = fakeSpawn();
+    const p = displayOff(depsWith({ spawn: s.spawn }));
+    s.fireExit(1);
+    await expect(p).rejects.toThrow(/exited 1/);
+  });
+
+  it("rejects when the child errors (spawn failure)", async () => {
+    const s = fakeSpawn();
+    const p = displayOff(depsWith({ spawn: s.spawn }));
+    s.fireError(new Error("ENOENT"));
+    await expect(p).rejects.toThrow(/ENOENT/);
+  });
+});
+
 describe("exec-based commands build the exact command line", () => {
   it("lockWorkstation", async () => {
     const e = fakeExec();
     await lockWorkstation(depsWith({ exec: e.exec }));
     expect(e.cmds).toEqual(["rundll32.exe user32.dll,LockWorkStation"]);
-  });
-
-  it("displayOff broadcasts SC_MONITORPOWER off (2)", async () => {
-    const e = fakeExec();
-    await displayOff(depsWith({ exec: e.exec }));
-    const cmd = e.cmds[0];
-    expect(cmd).toContain("SendMessage");
-    expect(cmd).toContain("65535"); // HWND_BROADCAST
-    expect(cmd).toContain("274"); // WM_SYSCOMMAND 0x0112
-    expect(cmd).toContain("61808"); // SC_MONITORPOWER 0xF170
-    expect(cmd).toMatch(/,\s*2\)/); // lParam 2 = monitor off
   });
 
   it("reboot passes the delay and message", async () => {
