@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../src/config.js";
@@ -14,5 +14,11 @@ describe("config", () => {
     expect(onDisk.token).toBe(a.token);
     const b = loadConfig(dir);
     expect(b.token).toBe(a.token); // idempotent
+  });
+
+  it("throws on a config with no token instead of returning undefined", () => {
+    const dir = mkdtempSync(join(tmpdir(), "wb-"));
+    writeFileSync(join(dir, "config.json"), '{"port":8790}');
+    expect(() => loadConfig(dir)).toThrow(/missing token/);
   });
 });

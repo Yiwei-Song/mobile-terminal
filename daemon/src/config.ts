@@ -22,5 +22,10 @@ export function loadConfig(dir?: string): Config {
     writeFileSync(file, JSON.stringify(fresh, null, 2));
   }
   const raw = JSON.parse(readFileSync(file, "utf8"));
+  // A truncated/edited config.json would give token: undefined, and an auth check
+  // comparing it to an absent client token would pass. Fail loud instead.
+  if (typeof raw.token !== "string" || raw.token === "") {
+    throw new Error(`${file}: missing token — delete the file to regenerate`);
+  }
   return { ...raw, dataDir };
 }
