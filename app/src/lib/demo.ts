@@ -86,7 +86,20 @@ export function seedDemo(): void {
       { id: "a2", kind: "text", role: "assistant", text: "Looking at how sessions are issued now — auth/tokens.ts owns both the access and the refresh path." },
       { id: "a3", kind: "tool", name: "Read", summary: "src/auth/tokens.ts (218 lines)" },
       { id: "a4", kind: "tool", name: "Edit", summary: "src/auth/tokens.ts +47 −12" },
-      { id: "a5", kind: "text", role: "assistant", text: "Rotation is in: the old token is revoked in the same transaction, so a replay after a refresh fails closed. The migration has to run before the tests will pass." },
+      // Multi-line on purpose: the transcript has to collapse a long tool line to
+      // its first row and offer the rest on a tap.
+      {
+        id: "a5",
+        kind: "tool",
+        name: "Bash",
+        summary:
+          "npx vitest run auth/rotation\n" +
+          " ✓ issues a new refresh token on use\n" +
+          " ✓ revokes the previous token in the same tx\n" +
+          " ✗ replay after refresh fails closed (needs migration)\n" +
+          " 3 passed · 1 failed",
+      },
+      { id: "a6", kind: "text", role: "assistant", text: "Rotation is in: the old token is revoked in the same transaction, so a replay after a refresh fails closed. The migration has to run before the tests will pass." },
     ],
     "s-web": [
       { id: "w1", kind: "text", role: "user", text: "The checkout spec fails about one run in four on CI. Find out why." },
