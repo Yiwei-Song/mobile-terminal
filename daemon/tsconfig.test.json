@@ -3,5 +3,7 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": { "noEmit": true, "rootDir": "." },
-  "include": ["src", "test"]
+  // scripts/ too: smoke.ts never runs in CI, so this typecheck is the only
+  // thing that notices when ClaudeSession's shape drifts out from under it.
+  "include": ["src", "test", "scripts"]
 }
