@@ -63,6 +63,43 @@ Notifications are generic ("Approval needed") — no commands or paths leave you
 
 ---
 
+## Remote reboot & always-on
+
+Want the PC to survive a reboot and come back on its own — restarted from the couch,
+sessions restored? Two pieces: a startup task (auto-starts the daemon) and auto-logon
+(gets you past the login screen unattended).
+
+**What it buys you:** tap **Reboot** in the app → PC reboots → auto-logs in → the daemon
+starts → it **locks the screen** → your sessions come back as **idle** → you tap to
+continue each one. The desktop is never left sitting unlocked.
+
+**The tradeoff — read this.** Auto-logon means Windows logs in without you typing a
+password, so it has to *store* that password. The registry route stores it in
+**plaintext**. Keep **BitLocker on** (full-disk encryption) — that's the mitigation.
+No BitLocker, no registry auto-logon.
+
+**1. Install the startup task** (once, elevated PowerShell):
+```
+cd daemon
+npm run build
+powershell -ExecutionPolicy Bypass -File scripts\install-startup.ps1
+```
+This registers a Task Scheduler job that launches the daemon at logon. It then **prints**
+the auto-logon steps — it does **not** touch your password.
+
+**2. Enable auto-logon yourself** (the script walks you through both):
+- **netplwiz** (preferred): `Win+R` → `netplwiz` → uncheck *"Users must enter a user
+  name and password"* → Apply. No visible plaintext password.
+- **Registry** (explicit plaintext): `AutoAdminLogon=1` + `DefaultUserName` +
+  `DefaultPassword` under `Winlogon`. Only with BitLocker on.
+
+**Undo the task:** `schtasks /delete /tn WorkbenchDaemon /f`
+
+> The daemon keeps the PC awake while it runs (display may sleep, the system won't),
+> so sessions keep going even when you're not looking.
+
+---
+
 ## Known limits (right now)
 
 - **Claude sessions only.** Codex is coming later.
