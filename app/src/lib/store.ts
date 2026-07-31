@@ -53,6 +53,11 @@ const rank = (s: SessionStatus): number => {
 // ponytail: module-level, not in state — none of it is rendered, and putting a
 // live socket in a React store only invites a re-render on every reconnect.
 let client: WorkbenchClient | null = null;
+// The pairing the live client was built for. Home calls connect() on every
+// focus, and rebuilding the socket each time would tear down a live connection
+// (or restart a backoff) for nothing — but a re-pair to a new host must not be
+// ignored, which is why the check is on the pairing and not just on `client`.
+let wired: { url: string; token: string } | null = null;
 // A new session's first events arrive before sessions.new resolves, so they
 // name an id no list has yet. Hold them until a refresh introduces the session.
 let buffered: SessionEvent[] = [];
@@ -80,7 +85,15 @@ export const useWorkbench = create<Workbench>((set, get) => ({
   lastError: null,
 
   connect(url, token, opts) {
+    if (client !== null && wired?.url === url && wired.token === token) {
+      // Same pairing: keep the socket. connect() on a client that already has
+      // one is a no-op, and on one waiting out a backoff it means "try now" —
+      // which is exactly what the offline screen's Retry button asks for.
+      client.connect();
+      return;
+    }
     get().disconnect();
+    wired = { url, token };
     client = new WorkbenchClient(
       url,
       token,
@@ -106,6 +119,7 @@ export const useWorkbench = create<Workbench>((set, get) => ({
   disconnect() {
     client?.close();
     client = null;
+    wired = null;
     buffered = [];
     refreshing = false;
     set({ sessions: [], transcripts: {}, pendingApprovals: {}, connState: "offline", machine: null, lastError: null });

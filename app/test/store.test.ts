@@ -1,6 +1,6 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
 
 import { useWorkbench } from "../src/lib/store";
 import { startDaemon, until, idle, type FakeQuery } from "./harness";
@@ -205,6 +205,52 @@ describe("workbench store", () => {
     expect(state().pendingApprovals).toEqual({});
 
     await again.close();
+  });
+
+  // Home calls connect() on every focus. Counting sockets is how "it did not
+  // tear the live one down" becomes observable — same Proxy trap the pairing
+  // tests use.
+  describe("connect", () => {
+    const RealWS = globalThis.WebSocket;
+    let opened = 0;
+
+    beforeEach(() => {
+      opened = 0;
+      globalThis.WebSocket = new Proxy(RealWS, {
+        construct: (t, a) => {
+          opened++;
+          return Reflect.construct(t, a) as object;
+        },
+      });
+    });
+    afterEach(() => {
+      globalThis.WebSocket = RealWS;
+    });
+
+    it("is a no-op for the pairing it is already on, and a rebuild for a new one", async () => {
+      const d = await startDaemon(idle());
+      await online(d.url, d.token);
+      await state().newSession("C:\\proj", "on the first machine");
+      expect(opened).toBe(1);
+
+      // The screen re-focuses twice: no new socket, and the session list — which
+      // disconnect() would have emptied — is still there.
+      state().connect(d.url, d.token, { baseDelayMs: 10 });
+      state().connect(d.url, d.token, { baseDelayMs: 10 });
+      expect(opened).toBe(1);
+      expect(state().connState).toBe("online");
+      expect(state().sessions).toHaveLength(1);
+
+      // Re-paired to a different daemon: the old connection must not survive it.
+      const e = await startDaemon(idle());
+      state().connect(e.url, e.token, { baseDelayMs: 10 });
+      await until("online on the new machine", () => state().connState === "online");
+      await until("listed the new machine's sessions", () => state().sessions.length === 0);
+      expect(opened).toBe(2);
+
+      await d.close();
+      await e.close();
+    });
   });
 
   it("keeps the reason a user-initiated action failed", async () => {

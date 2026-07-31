@@ -1,40 +1,43 @@
-import { useCallback, useRef, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { useCallback, useState } from "react";
+import { FlatList, Pressable, RefreshControl, StyleSheet, View } from "react-native";
 import { router, useFocusEffect } from "expo-router";
-import { Settings as SettingsIcon } from "lucide-react-native";
+import { Plus, ShieldAlert, TerminalSquare, WifiOff, X } from "lucide-react-native";
 
 import { Button } from "../src/components/Button";
 import { Card } from "../src/components/Card";
-import { MonoText } from "../src/components/MonoText";
+import { EmptyState } from "../src/components/EmptyState";
+import { MachineBar } from "../src/components/MachineBar";
 import { Screen } from "../src/components/Screen";
+import { SessionRow } from "../src/components/SessionRow";
 import { Text } from "../src/components/Text";
 import type { ConnState } from "../src/lib/client";
+import { demoMode, seedDemo } from "../src/lib/demo";
 import { loadPairing, pairingUrl, type Pairing } from "../src/lib/pairing";
 import { useWorkbench } from "../src/lib/store";
-import { color, space, type ColorRole } from "../src/theme";
+import { color, icon as iconSize, opacity, space, touch } from "../src/theme";
 
-const CONN: Record<ConnState, { label: string; role: ColorRole }> = {
-  connecting: { label: "Connecting…", role: "info" },
-  online: { label: "Online", role: "accent" },
-  offline: { label: "Offline — retrying", role: "idle" },
-  unauthorized: { label: "Token rejected", role: "danger" },
-};
-
-// Placeholder home. Task 6 replaces this with the real session list; what it
-// owns for now is the routing rule: no pairing stored → the pair screen.
+/**
+ * Home: "does anything need me?" answered in under a second. The list is the
+ * screen — machine bar above it, one FAB below it, nothing else competing.
+ */
 export default function Home() {
+  const sessions = useWorkbench((s) => s.sessions);
   const connState = useWorkbench((s) => s.connState);
-  const machine = useWorkbench((s) => s.machine);
+  const lastError = useWorkbench((s) => s.lastError);
   const connect = useWorkbench((s) => s.connect);
+  const refreshSessions = useWorkbench((s) => s.refreshSessions);
   // undefined until storage answers: rendering "not paired" for that frame is a
-  // flash of the wrong screen on every cold start.
-  const [pairing, setPairing] = useState<Pairing | null | undefined>(undefined);
-  // The token we already handed the store. Re-running connect() on every focus
-  // would tear down a live socket (or restart a retry backoff) for nothing.
-  const wired = useRef<string | null>(null);
+  // flash of the wrong screen on every cold start. Demo mode never asks storage
+  // — it *is* the connection — so it starts already answered.
+  const [pairing, setPairing] = useState<Pairing | null | undefined>(demoMode ? null : undefined);
+  const [refreshing, setRefreshing] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
+      if (demoMode) {
+        seedDemo();
+        return;
+      }
       let alive = true;
       void loadPairing().then((p) => {
         if (!alive) return;
@@ -43,8 +46,7 @@ export default function Home() {
           router.replace("/pair");
           return;
         }
-        if (wired.current === p.token) return;
-        wired.current = p.token;
+        // Cheap on every focus: the store no-ops when the pairing is unchanged.
         connect(pairingUrl(p), p.token);
       });
       return () => {
@@ -53,58 +55,125 @@ export default function Home() {
     }, [connect]),
   );
 
-  const conn = CONN[connState];
+  const refresh = () => {
+    setRefreshing(true);
+    // The rejection is already state (lastError) — the banner below reports it.
+    void refreshSessions(true)
+      .catch(() => {})
+      .finally(() => setRefreshing(false));
+  };
+
+  const retry = () => {
+    if (pairing === null || pairing === undefined) return;
+    connect(pairingUrl(pairing), pairing.token);
+  };
 
   if (pairing === undefined) return null;
 
   return (
     <Screen>
-      <View style={styles.header}>
-        <Text variant="title">Workbench</Text>
-        <Button label="Settings" variant="ghost" icon={SettingsIcon} onPress={() => router.push("/settings")} />
-      </View>
+      <MachineBar />
 
-      <View style={styles.body}>
-        <Card>
-          <View style={styles.row}>
-            <View style={[styles.dot, { backgroundColor: color[conn.role] }]} />
-            <Text variant="body">{conn.label}</Text>
+      {lastError !== null && (
+        <Card accentEdge="danger" style={styles.error}>
+          <View style={styles.errorRow}>
+            <Text variant="sub" color="danger" style={styles.errorText}>
+              {lastError}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss error"
+              onPress={() => useWorkbench.setState({ lastError: null })}
+              style={({ pressed }) => [styles.dismiss, pressed && { opacity: opacity.pressed }]}
+            >
+              <X size={iconSize.md} color={color.textMut} />
+            </Pressable>
           </View>
-          <MonoText style={styles.value}>
-            {pairing === null ? "not paired" : `${pairing.host}:${pairing.port}`}
-            {machine === null ? "" : `  ·  ${machine.hostname}  ·  v${machine.version}`}
-          </MonoText>
         </Card>
+      )}
 
-        {connState === "unauthorized" && (
-          <Card accentEdge="danger">
-            <Text variant="h2" color="danger">
-              Token rejected
-            </Text>
-            <Text variant="body" color="textMut" style={styles.value}>
-              The daemon refused this token — re-scan the QR (did the daemon regenerate it?).
-            </Text>
-            <View style={styles.actions}>
-              <Button label="Re-pair" onPress={() => router.push("/pair")} />
-            </View>
-          </Card>
-        )}
+      <FlatList
+        data={sessions}
+        keyExtractor={(s) => s.sessionId}
+        renderItem={({ item }) => <SessionRow session={item} />}
+        ItemSeparatorComponent={Separator}
+        contentContainerStyle={sessions.length === 0 ? styles.emptyList : styles.list}
+        ListEmptyComponent={<Empty connState={connState} onRetry={retry} />}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={color.textMut} colors={[color.accent]} />
+        }
+      />
 
-        <Text variant="sub" color="textMut">
-          Session list lands in the next task.
-        </Text>
-      </View>
+      {/* Thumb-reachable, and the only primary action on the screen. */}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="New session"
+        onPress={() => router.push("/new")}
+        style={({ pressed }) => [styles.fab, pressed && { opacity: opacity.pressed }]}
+      >
+        <Plus size={iconSize.lg} color={color.accentText} />
+      </Pressable>
     </Screen>
   );
 }
 
-const DOT = space(2.5);
+const Separator = () => <View style={styles.separator} />;
+
+// Nothing dead-ends: every empty list says why it is empty and offers the move
+// that fixes it. "connecting" is the one state with nothing useful to say yet.
+function Empty({ connState, onRetry }: { connState: ConnState; onRetry: () => void }) {
+  if (connState === "unauthorized")
+    return (
+      <EmptyState
+        icon={ShieldAlert}
+        title="Your PC turned this phone away"
+        body="The token stopped working — the daemon probably made a new one. Pair again to pick it up."
+        action={<Button label="Re-pair" onPress={() => router.push({ pathname: "/pair", params: { edit: "1" } })} />}
+      />
+    );
+  if (connState === "offline")
+    return (
+      <EmptyState
+        icon={WifiOff}
+        title="Can't reach your PC"
+        body="Same wifi? VPN off? Is the daemon still running? It keeps trying in the background."
+        action={<Button label="Retry now" onPress={onRetry} />}
+      />
+    );
+  if (connState === "online")
+    return (
+      <EmptyState
+        icon={TerminalSquare}
+        title="No sessions yet"
+        body="Start one — tap +, pick a folder on your PC and say what you want done."
+        action={<Button label="New session" icon={Plus} onPress={() => router.push("/new")} />}
+      />
+    );
+  return null;
+}
+
+const FAB = space(14);
 
 const styles = StyleSheet.create({
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingTop: space(2) },
-  body: { flex: 1, gap: space(3), paddingTop: space(3) },
-  row: { flexDirection: "row", alignItems: "center", gap: space(2) },
-  value: { marginTop: space(2) },
-  actions: { flexDirection: "row", marginTop: space(3) },
-  dot: { width: DOT, height: DOT, borderRadius: DOT / 2 },
+  list: { paddingBottom: space(24), paddingTop: space(1) },
+  // Centres the empty state in the space the list has, rather than at the top.
+  emptyList: { flexGrow: 1, paddingBottom: space(24) },
+  separator: { height: space(2) },
+  error: { marginBottom: space(3) },
+  errorRow: { flexDirection: "row", alignItems: "center", gap: space(2) },
+  errorText: { flexShrink: 1 },
+  dismiss: { width: touch.min, height: touch.min, alignItems: "center", justifyContent: "center", marginVertical: -space(3) },
+  fab: {
+    position: "absolute",
+    // Flush with the content column, not the screen edge: the FAB lines up with
+    // the right edge of every card above it.
+    right: 0,
+    bottom: space(4),
+    width: FAB,
+    height: FAB,
+    borderRadius: FAB / 2,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: color.accent,
+  },
 });
