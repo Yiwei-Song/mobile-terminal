@@ -82,6 +82,12 @@ describe("server", () => {
     await srv.close();
   });
 
+  it("rejects instead of hanging when the port is taken", async () => {
+    const first = await startServer(cfgFor(), async () => null);
+    await expect(startServer({ ...cfgFor(), port: first.port }, async () => null)).rejects.toThrow();
+    await first.close();
+  });
+
   it("serves the debug page at /", async () => {
     const srv = await startServer(cfgFor(), async () => null);
     const res = await fetch(`http://127.0.0.1:${srv.port}/`);

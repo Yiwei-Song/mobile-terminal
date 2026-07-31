@@ -38,8 +38,15 @@ export function startServer(cfg: Config, handler: RequestHandler) {
     res.end(html);
   });
   const wss = new WebSocketServer({ server: http, path: "/ws" });
+  // ws mirrors the http server's "error" onto itself, and an unlistened "error"
+  // event throws out of the emit loop — before the http listener below can run.
+  // The real handling is on http; this only keeps the mirror quiet.
+  wss.on("error", () => {});
 
   wss.on("connection", (ws) => {
+    // A socket that dies mid-send (ECONNRESET from a phone leaving wifi) emits
+    // "error"; unhandled, an EventEmitter error event would take the daemon down.
+    ws.on("error", () => ws.terminate());
     // Auth-first: nothing else is even parsed until the first message authenticates.
     ws.once("message", (raw) => {
       const m = parseClientMsg(raw.toString());
@@ -60,7 +67,10 @@ export function startServer(cfg: Config, handler: RequestHandler) {
     });
   });
 
-  return new Promise<{ close(): Promise<void>; port: number }>((resolve) => {
+  return new Promise<{ close(): Promise<void>; port: number }>((resolve, reject) => {
+    // Port already taken (a second daemon) must reject, not hang forever on a
+    // promise while an uncaught "error" event kills the process.
+    http.once("error", reject);
     http.listen(cfg.port, "0.0.0.0", () => resolve({
       port: (http.address() as any).port,
       close: () => new Promise<void>((r) => { for (const ws of wss.clients) ws.terminate(); wss.close(); http.close(() => r()); }),
