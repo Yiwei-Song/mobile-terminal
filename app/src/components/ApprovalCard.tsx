@@ -17,13 +17,11 @@ import { Text } from "./Text";
 // the composer so the decision is never buried in the scroll.
 export function ApprovalCard({
   approval,
-  index,
   total,
   onDecide,
 }: {
   approval: Approval;
-  /** 0-based position when several are queued — shows "1 of N". */
-  index: number;
+  /** Queue length — shows "1 of N" when several are pending. */
   total: number;
   onDecide(allow: boolean): void;
 }) {
@@ -35,7 +33,13 @@ export function ApprovalCard({
   const [busy, setBusy] = useState<boolean | null>(null);
 
   useEffect(() => {
-    if (reduced) return;
+    // reduced resolves async (false on first render), so seeding appear isn't
+    // enough — snap to shown when it lands true, otherwise the mount slide-in
+    // has already fired.
+    if (reduced) {
+      appear.setValue(1);
+      return;
+    }
     Animated.timing(appear, { toValue: 1, duration: motion.base, useNativeDriver: true }).start();
   }, [reduced, appear]);
 
@@ -64,7 +68,7 @@ export function ApprovalCard({
           </Text>
           {total > 1 && (
             <Text variant="sub" color="textMut">
-              {index + 1} of {total}
+              1 of {total}
             </Text>
           )}
         </View>

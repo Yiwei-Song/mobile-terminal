@@ -162,7 +162,6 @@ export default function SessionScreen() {
             // in) instead of morphing the resolved one.
             key={current.requestId}
             approval={current}
-            index={0}
             total={asks.length}
             onDecide={(allow) => void approve(id, current.requestId, allow).catch(() => {})}
           />
@@ -212,6 +211,8 @@ const styles = StyleSheet.create({
     bottom: space(3),
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
+    minHeight: touch.min,
     gap: space(1),
     paddingHorizontal: space(3),
     paddingVertical: space(2),
