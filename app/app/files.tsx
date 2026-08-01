@@ -459,7 +459,7 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   header: { flexDirection: "row", alignItems: "center", gap: space(2), paddingTop: space(2), paddingBottom: space(3) },
   headText: { flex: 1, gap: space(0.5) },
-  toggle: { minWidth: touch.min, height: touch.min, alignItems: "center", justifyContent: "center", marginVertical: -space(2) },
+  toggle: { minWidth: touch.min, height: touch.min, alignItems: "center", justifyContent: "center" },
 
   banner: {
     paddingVertical: space(2),

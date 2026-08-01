@@ -320,7 +320,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: space(1),
     marginHorizontal: -space(4),
-    paddingHorizontal: space(3),
+    // Matches the bleed exactly: 12 would hang the outer buttons 4pt past the
+    // screen's content box, and Android does not deliver those touches.
+    paddingHorizontal: space(4),
     paddingVertical: space(1),
     marginTop: space(2),
     borderTopWidth: stroke.hairline,

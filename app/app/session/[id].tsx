@@ -269,8 +269,8 @@ const styles = StyleSheet.create({
     gap: space(1.5),
     minHeight: touch.min,
     paddingHorizontal: space(2),
-    // Claims the 48dp hit box without pushing the transcript down for it.
-    marginVertical: -space(1),
+    // No negative margin: a hit box that hangs outside the row's frame is not
+    // delivered touches on Android, so the 48 has to be paid for in layout.
   },
   offlineRow: { flexDirection: "row", alignItems: "center", gap: space(1) },
   transcript: { flex: 1 },

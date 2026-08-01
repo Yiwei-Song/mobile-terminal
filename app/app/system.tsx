@@ -418,7 +418,7 @@ const styles = StyleSheet.create({
 
   noteCard: {},
   noteRow: { flexDirection: "row", alignItems: "center", gap: space(2) },
-  dismiss: { width: touch.min, height: touch.min, alignItems: "center", justifyContent: "center", marginVertical: -space(3) },
+  dismiss: { width: touch.min, height: touch.min, alignItems: "center", justifyContent: "center" },
 
   stale: { opacity: opacity.disabled },
   uptimeRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline", paddingTop: space(2) },
@@ -431,7 +431,7 @@ const styles = StyleSheet.create({
   procRow: { flexDirection: "row", alignItems: "center", gap: space(3), minHeight: touch.min },
   procMeta: { flexDirection: "row", alignItems: "baseline", gap: space(1) },
   procCpu: { minWidth: space(12), textAlign: "right" },
-  kill: { width: touch.min, height: touch.min, alignItems: "center", justifyContent: "center", marginRight: -space(2) },
+  kill: { width: touch.min, height: touch.min, alignItems: "center", justifyContent: "center" },
 
   toggleRow: { flexDirection: "row", alignItems: "center", gap: space(3), minHeight: touch.min },
   control: { gap: space(1.5) },

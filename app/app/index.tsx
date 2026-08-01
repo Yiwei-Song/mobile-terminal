@@ -86,15 +86,9 @@ export default function Home() {
       <MachineBar />
 
       {/* One compact row, never a second screen of chrome: the list below it is
-          still what the eye lands on. Same live-PC rule as the FAB. */}
-      <ActionRow
-        disabled={!canStart}
-        hint={
-          connState === "unauthorized"
-            ? "This PC turned the phone away — re-pair to open these."
-            : "Offline — these need a live connection to your PC."
-        }
-      />
+          still what the eye lands on. Always navigable — unlike the FAB, these
+          four screens each have something honest to show while offline. */}
+      <ActionRow />
 
       {lastError !== null && (
         <Card accentEdge="danger" style={styles.error}>
@@ -191,7 +185,7 @@ const styles = StyleSheet.create({
   error: { marginBottom: space(3) },
   errorRow: { flexDirection: "row", alignItems: "center", gap: space(2) },
   errorText: { flexShrink: 1 },
-  dismiss: { width: touch.min, height: touch.min, alignItems: "center", justifyContent: "center", marginVertical: -space(3) },
+  dismiss: { width: touch.min, height: touch.min, alignItems: "center", justifyContent: "center" },
   fab: {
     position: "absolute",
     // Flush with the content column, not the screen edge: the FAB lines up with
