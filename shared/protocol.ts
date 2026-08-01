@@ -10,6 +10,8 @@
 export type {
   ClientMsg,
   ConfigInfo,
+  Entry,
+  Port,
   ServerMsg,
   SessionStatus,
   SessionEvent,

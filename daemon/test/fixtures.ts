@@ -4,6 +4,7 @@ import { KeepAwake, type PowerDeps } from "../src/power.js";
 import type { SystemDeps } from "../src/system.js";
 import { PtyManager, type IPty, type PtyDeps } from "../src/term.js";
 import type { MachineDeps } from "../src/sessions/registry.js";
+import type { Exec } from "../src/files.js";
 
 const GB = 1024 ** 3;
 
@@ -70,8 +71,16 @@ export function fakeMachine(procs: Parameters<typeof fakeSi>[0] = []) {
   // wires the same two callbacks to term.data / term.exit events.
   const onTerm = { data: (_id: string, _d: string) => {}, exit: (_id: string, _c: number) => {} };
   const pty = new PtyManager(ptyFake.deps, (id, d) => onTerm.data(id, d), (id, c) => onTerm.exit(id, c));
-  const machine: MachineDeps = { system: { si: fakeSi(procs) }, keepAwake, power, pty };
-  return { machine, keepAwake, execCmds, pty, ptyFake, onTerm };
+  // The argv-style exec the git/ports RPCs run on: records what was asked for
+  // and answers from `execOut`, keyed by the command name a test wants to stub.
+  const execFileCalls: { file: string; args: string[]; cwd?: string }[] = [];
+  const execOut: Record<string, string> = {};
+  const execFile: Exec = async (file, args, cwd) => {
+    execFileCalls.push({ file, args, cwd });
+    return execOut[file] ?? "";
+  };
+  const machine: MachineDeps = { system: { si: fakeSi(procs) }, keepAwake, power, pty, execFile };
+  return { machine, keepAwake, execCmds, execFileCalls, execOut, pty, ptyFake, onTerm };
 }
 
 // Shared fake SDK messages. `satisfies`-checked against the real SDK types, so a

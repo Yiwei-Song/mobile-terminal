@@ -7,6 +7,9 @@ export interface Config {
   port: number;
   ntfyTopic: string | null;
   dataDir: string;
+  // Extra trees the phone may browse, on top of the cwds of known sessions.
+  // Hand-edited into config.json; absent means "sessions only".
+  fileRoots?: string[];
 }
 
 export function loadConfig(dir?: string): Config {

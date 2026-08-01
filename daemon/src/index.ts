@@ -8,6 +8,7 @@ import { startServer } from "./server.js";
 import { notify, ntfyFor } from "./notify.js";
 import { runBootResume, bootSideEffects } from "./boot.js";
 import { KeepAwake, lockWorkstation } from "./power.js";
+import { execFileText } from "./files.js";
 import * as pty from "@lydell/node-pty";
 import { PtyManager } from "./term.js";
 import type { PushEvent } from "./protocol.js";
@@ -59,7 +60,7 @@ const registry = new Registry(
     if (n) notify(cfg.ntfyTopic, n.title, n.body);
   },
   cfg,
-  { system: { si }, keepAwake, power: powerDeps, pty: terms },
+  { system: { si }, keepAwake, power: powerDeps, pty: terms, execFile: execFileText },
 );
 
 // After the manifest is normalized and before any client can read it: clear

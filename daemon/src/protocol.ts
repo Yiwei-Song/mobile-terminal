@@ -24,7 +24,13 @@ export type ClientMsg =
   | { type: "req"; id: string; method: "term.write"; params: { termId: string; data: string } }
   | { type: "req"; id: string; method: "term.resize"; params: { termId: string; cols: number; rows: number } }
   | { type: "req"; id: string; method: "term.kill"; params: { termId: string } }
-  | { type: "req"; id: string; method: "term.scrollback"; params: { termId: string } };
+  | { type: "req"; id: string; method: "term.scrollback"; params: { termId: string } }
+  | { type: "req"; id: string; method: "files.roots" }
+  | { type: "req"; id: string; method: "files.list"; params: { dir: string } }
+  | { type: "req"; id: string; method: "files.read"; params: { path: string } }
+  | { type: "req"; id: string; method: "git.status"; params: { cwd: string } }
+  | { type: "req"; id: string; method: "git.diff"; params: { cwd: string; file?: string } }
+  | { type: "req"; id: string; method: "ports.list" };
 
 // Daemon → client.
 export type ServerMsg =
@@ -100,6 +106,21 @@ export interface TermInfo {
   rows: number;
 }
 
+// A row of files.list and of ports.list. Same reason as Metrics/TermInfo: the
+// app re-exports this file, and files.ts/ports.ts import node builtins that have
+// no place in the phone's type graph. Those modules import these back.
+export interface Entry {
+  name: string;
+  path: string;
+  dir: boolean;
+  size: number; // 0 for directories
+}
+export interface Port {
+  port: number;
+  pid: number;
+  process: string; // "?" when the pid has no tasklist row
+}
+
 // Terminal output and death. Not session events — a pty has no sessionId, and
 // only the WebView terminal page consumes these.
 export type TermEvent =
@@ -146,6 +167,15 @@ const METHODS = new Map<string, (p: any) => boolean>([
   ["term.resize", (p) => str(p?.termId) && dim(p?.cols) && dim(p?.rows)],
   ["term.kill", (p) => str(p?.termId)],
   ["term.scrollback", (p) => str(p?.termId)],
+  // The path itself is only checked for being a string here; whether it is
+  // *reachable* is files.ts's guard, which needs the roots this layer has not
+  // got. A non-string would crash path.resolve before ever reaching it.
+  ["files.roots", () => true],
+  ["files.list", (p) => str(p?.dir)],
+  ["files.read", (p) => str(p?.path)],
+  ["git.status", (p) => str(p?.cwd)],
+  ["git.diff", (p) => str(p?.cwd) && (p.file === undefined || str(p.file))],
+  ["ports.list", () => true],
 ]);
 
 export function parseClientMsg(raw: string): ClientMsg | null {

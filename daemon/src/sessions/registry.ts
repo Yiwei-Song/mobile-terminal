@@ -5,6 +5,8 @@ import { VERSION } from "../version.js";
 import { snapshot, topProcesses, killProcess, type SystemDeps } from "../system.js";
 import { KeepAwake, lockWorkstation, displayOff, reboot, abortReboot, type PowerDeps } from "../power.js";
 import type { PtyManager } from "../term.js";
+import { allowedRoots, list as listDir, read as readFile, gitStatus, gitDiff, type Exec } from "../files.js";
+import { listeningPorts } from "../ports.js";
 import { ClaudeSession, type ClaudeDeps } from "./claude.js";
 import type { Manifest, ManifestEntry } from "./manifest.js";
 
@@ -22,6 +24,11 @@ export interface MachineDeps {
   keepAwake: KeepAwake; // the one keep-awake hold the daemon holds while it runs
   power: PowerDeps; // { spawn, exec } for lock/displayOff/reboot
   pty: PtyManager; // the live terminals; its onData/onExit push term.* events
+  // ponytail: git/netstat ride here rather than a second deps bag — this bag is
+  // already "the host-level things a handler acts on". Deliberately NOT
+  // power.exec: that one is string-based (a shell), and these commands take a
+  // filename that came off the wire. See files.ts's Exec.
+  execFile: Exec;
 }
 
 // shutdown /r wants whole seconds; 5..120 keeps a fat-fingered 0 from rebooting
@@ -182,6 +189,26 @@ export class Registry {
       case "term.scrollback":
         return { data: this.machine.pty.scrollback(params.termId) };
 
+      // Everything below refuses a path outside the roots by throwing, which
+      // startServer turns into { ok: false, error: "outside allowed roots" }.
+      case "files.roots":
+        return this.roots();
+
+      case "files.list":
+        return listDir(params.dir, this.roots());
+
+      case "files.read":
+        return readFile(params.path, this.roots());
+
+      case "git.status":
+        return gitStatus(params.cwd, this.roots(), this.machine.execFile);
+
+      case "git.diff":
+        return { diff: await gitDiff(params.cwd, this.roots(), this.machine.execFile, params.file) };
+
+      case "ports.list":
+        return listeningPorts(this.machine.execFile);
+
       default:
         throw new Error(`unknown method: ${method}`);
     }
@@ -208,6 +235,12 @@ export class Registry {
   // The session-aware "release when nothing is running" mode is a follow-up.
   private powerState(): { keepAwake: boolean; ecoMode: boolean } {
     return { keepAwake: this.machine.keepAwake.active, ecoMode: false };
+  }
+
+  // Recomputed per request, not cached: a session started a second ago must be
+  // browsable now, and a removed one must stop being reachable immediately.
+  private roots(): string[] {
+    return allowedRoots(this.cfg, this.manifest.list().map((s) => s.cwd));
   }
 
   private entry(sessionId: string): ManifestEntry {
