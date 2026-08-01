@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ScrollView, StyleSheet, View } from "react-native";
 import { router, useFocusEffect } from "expo-router";
-import { Play, Square, ShieldAlert, Wifi, WifiOff, Wrench } from "lucide-react-native";
+import { Play, RefreshCw, Square, ShieldAlert, Wifi, WifiOff, Wrench } from "lucide-react-native";
 import type { LucideIcon } from "lucide-react-native";
 import type { ToolStatus } from "@shared/protocol";
 
@@ -110,6 +110,19 @@ export default function Tools() {
           title="No dev tools declared"
           // The path is the whole answer: nothing here works until that file exists.
           body={`Create ${TOOLS_FILE} on your PC — a list of {name, command, args, cwd, port}. Copy daemon/tools.example.json to start, then restart the daemon.`}
+          // Instructions, not a sentence — read down a left edge.
+          bodyLeft
+          // The one thing the phone can do about it: you write the file at the
+          // desk, then ask again from here without leaving the screen.
+          action={
+            <Button
+              label="Check again"
+              icon={RefreshCw}
+              variant="outline"
+              disabled={offline}
+              onPress={() => void refreshTools().catch(() => {})}
+            />
+          }
         />
       ) : (
         <ScrollView contentContainerStyle={styles.scroll}>

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 import { FileX2 } from "lucide-react-native";
 
 import {
@@ -15,6 +15,7 @@ import {
 } from "../lib/diff";
 import { color, icon as iconSize, opacity, radius, space, stroke, tint, touch } from "../theme";
 import { MonoText } from "./MonoText";
+import { SideScroll } from "./SideScroll";
 import { Text } from "./Text";
 
 /**
@@ -98,7 +99,7 @@ function Hunk({ hunk }: { hunk: DiffHunk }) {
           so a tint runs the full width of the longest line rather than stopping
           where its own text ends. minWidth keeps short hunks full-bleed too.
           The @@ header rides inside it — outside, it truncated. */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.wide}>
+      <SideScroll fade={color.surface} contentContainerStyle={styles.wide}>
         <View>
           <View style={styles.hunkHead}>
             <MonoText>{hunk.header}</MonoText>
@@ -111,7 +112,7 @@ function Hunk({ hunk }: { hunk: DiffHunk }) {
             ),
           )}
         </View>
-      </ScrollView>
+      </SideScroll>
     </View>
   );
 }
@@ -172,7 +173,9 @@ const styles = StyleSheet.create({
   add: { backgroundColor: tint.add },
   del: { backgroundColor: tint.del },
   gutter: { width: space(9), textAlign: "right", paddingRight: space(2) },
-  code: { paddingRight: space(4) },
+  // Wide enough to clear SideScroll's edge fade, so the last character of the
+  // longest line is not dimmed once you have scrolled all the way to it.
+  code: { paddingRight: space(6) },
 
   // ≥48 so a thumb can open a collapsed run without a second try.
   fold: { minHeight: touch.min, justifyContent: "center", paddingLeft: space(9), paddingRight: space(4) },

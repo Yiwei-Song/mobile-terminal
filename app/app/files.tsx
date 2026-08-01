@@ -12,6 +12,7 @@ import { DiffView } from "../src/components/DiffView";
 import { EmptyState } from "../src/components/EmptyState";
 import { MonoText } from "../src/components/MonoText";
 import { Screen } from "../src/components/Screen";
+import { SideScroll } from "../src/components/SideScroll";
 import { Text } from "../src/components/Text";
 import { demoFs, demoMode, seedDemo } from "../src/lib/demo";
 import { loadPairing, pairingUrl } from "../src/lib/pairing";
@@ -375,12 +376,12 @@ function FileViewer({
           ))}
         </View>
       ) : (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.wide}>
+        <SideScroll contentContainerStyle={styles.wide}>
           <View style={styles.code}>
             <MonoText style={styles.lineNos}>{gutter}</MonoText>
             <MonoText color="text">{text}</MonoText>
           </View>
-        </ScrollView>
+        </SideScroll>
       )}
     </ScrollView>
   );
@@ -393,9 +394,9 @@ const HEADING = [typeScale.title, typeScale.h2, { ...typeScale.body, fontFamily:
 function Block({ block }: { block: MdBlock }) {
   if (block.kind === "code")
     return (
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.fence}>
+      <SideScroll style={styles.fence} contentContainerStyle={styles.fenceBody}>
         <MonoText color="text">{block.text}</MonoText>
-      </ScrollView>
+      </SideScroll>
     );
   if (block.kind === "heading")
     return (
@@ -497,7 +498,9 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center", gap: space(3), minHeight: touch.min, paddingRight: space(1) },
   rowName: { flex: 1 },
 
-  wide: { minWidth: "100%" },
+  // paddingRight clears SideScroll's edge fade: scrolled fully right, the last
+  // character of the longest line must be at full brightness, not under it.
+  wide: { minWidth: "100%", paddingRight: space(6) },
   code: { flexDirection: "row", gap: space(3) },
   lineNos: { textAlign: "right", minWidth: space(7) },
 
@@ -512,6 +515,7 @@ const styles = StyleSheet.create({
     borderColor: color.border,
     padding: space(3),
   },
+  fenceBody: { paddingRight: space(6) },
 });
 
 const span = StyleSheet.create({

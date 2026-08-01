@@ -193,7 +193,7 @@ describe("files/git/ports RPCs", () => {
     const h = await harness();
     h.fm.execOut["netstat"] = "  TCP    127.0.0.1:8790         0.0.0.0:0              LISTENING       5678\n";
     h.fm.execOut["tasklist"] = '"node.exe","5678","Console","1","1 K"\n';
-    expect((await h.call("1", "ports.list")).data).toEqual([{ port: 8790, pid: 5678, process: "node.exe" }]);
+    expect((await h.call("1", "ports.list")).data).toEqual([{ port: 8790, pid: 5678, process: "node.exe", dev: true }]);
     await h.done();
   });
 });

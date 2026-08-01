@@ -50,6 +50,10 @@ export default function Preview() {
 
   const [pairing, setPairing] = useState<Pairing | null>(null);
   const [port, setPort] = useState<number | null>(null);
+  // Off by default: the screen promises dev servers, and a list that opens on
+  // :135 svchost — which renders nothing when tapped — breaks that promise
+  // before the user has done anything. Nothing is truly hidden; see the toggle.
+  const [showAll, setShowAll] = useState(false);
   // Where the frame actually is, which is not always where we sent it (a
   // redirect, a link tap). Seeded with the URL we asked for so the toolbar has
   // something true to show before the first navigation event.
@@ -101,6 +105,14 @@ export default function Preview() {
     else setPort(null);
   };
 
+  // The daemon already flagged and sorted these; the screen only decides how
+  // much of the tail to show.
+  const shown = showAll ? ports : ports.filter((p) => p.dev);
+  const hidden = ports.length - ports.filter((p) => p.dev).length;
+  // What the header says while a page is up: the process and its port, not the
+  // URL — the toolbar shows that, and one truth per screen.
+  const openPort = ports.find((p) => p.port === port);
+
   return (
     <Screen>
       <View style={styles.header}>
@@ -114,7 +126,10 @@ export default function Preview() {
               Your PC&apos;s dev servers, at phone size
             </Text>
           ) : (
-            <MonoText numberOfLines={1}>{nav.url}</MonoText>
+            <MonoText numberOfLines={1}>
+              :{port}
+              {openPort === undefined ? "" : ` · ${openPort.process}`}
+            </MonoText>
           )}
         </View>
         {port === null && (
@@ -197,14 +212,29 @@ export default function Preview() {
       ) : (
         <ScrollView contentContainerStyle={styles.scroll}>
           <Text variant="sub" color="textMut" style={styles.sectionLabel}>
-            LISTENING ON {host.toUpperCase()}
+            {showAll ? "LISTENING ON" : "DEV SERVERS ON"} {host.toUpperCase()}
           </Text>
-          {ports.map((p) => (
+          {shown.length === 0 && (
+            <Text variant="sub" color="textMut">
+              Nothing here looks like a dev server — only Windows&apos; own services are listening.
+            </Text>
+          )}
+          {shown.map((p) => (
             // The page itself is fetched from the PC, not through the socket —
             // but if the socket is down the wifi is, and the frame would only
             // render a browser error. Say so up front instead.
             <PortRow key={p.port} port={p} disabled={offline} onOpen={() => open(p.port)} />
           ))}
+          {/* The escape hatch: the filter is a heuristic, so the rows it demoted
+              are one tap away rather than gone. */}
+          {hidden > 0 && (
+            <Button
+              label={showAll ? "Show dev servers only" : `Show all ports (${hidden} more)`}
+              variant="ghost"
+              fill
+              onPress={() => setShowAll((s) => !s)}
+            />
+          )}
         </ScrollView>
       )}
     </Screen>

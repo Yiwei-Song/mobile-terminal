@@ -108,6 +108,14 @@ export default function Home() {
         </Card>
       )}
 
+      {/* The FAB's clearance is the list's own box, not its content padding:
+          content padding only pays off once the list is scrolled to the end,
+          and a short list simply stops where it stops — which on a populated
+          home screen was under the FAB, clipping the last card's status chip.
+          A wrapper rather than a style on the FlatList: react-native-web renders
+          a ScrollView as two nested divs and applies `style` to both, which
+          doubled the margin. */}
+      <View style={styles.listBox}>
       <FlatList
         data={sessions}
         keyExtractor={(s) => s.sessionId}
@@ -119,6 +127,7 @@ export default function Home() {
           <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={color.textMut} colors={[color.accent]} />
         }
       />
+      </View>
 
       {/* Thumb-reachable, and the only primary action on the screen. Dimmed and
           inert when there is no live PC to start a session on — a disabled FAB
@@ -176,11 +185,14 @@ function Empty({ connState, onRetry }: { connState: ConnState; onRetry: () => vo
 }
 
 const FAB = space(14);
+// FAB height + the gap under it + the same gap above it.
+const FAB_CLEAR = FAB + space(4) * 2;
 
 const styles = StyleSheet.create({
-  list: { paddingBottom: space(24), paddingTop: space(1) },
+  listBox: { flex: 1, marginBottom: FAB_CLEAR },
+  list: { paddingTop: space(1), paddingBottom: space(2) },
   // Centres the empty state in the space the list has, rather than at the top.
-  emptyList: { flexGrow: 1, paddingBottom: space(24) },
+  emptyList: { flexGrow: 1 },
   separator: { height: space(2) },
   error: { marginBottom: space(3) },
   errorRow: { flexDirection: "row", alignItems: "center", gap: space(2) },

@@ -34,13 +34,13 @@ function fakeExec(netstat = NETSTAT, tasklist = TASKLIST) {
 }
 
 describe("listeningPorts", () => {
-  it("parses LISTENING lines, maps pid to process name, dedups and sorts", async () => {
+  it("parses LISTENING lines, maps pid to process name, dedups, and floats dev servers", async () => {
     const f = fakeExec();
     const ports = await listeningPorts(f.exec);
     expect(ports).toEqual([
-      { port: 135, pid: 1234, process: "svchost.exe" },
-      { port: 445, pid: 4, process: "System" },
-      { port: 8790, pid: 5678, process: "node.exe" },
+      { port: 8790, pid: 5678, process: "node.exe", dev: true },
+      { port: 135, pid: 1234, process: "svchost.exe", dev: false },
+      { port: 445, pid: 4, process: "System", dev: false },
     ]);
     // One tasklist call for the whole table, not one per pid.
     expect(f.calls.map((c) => c.file).sort()).toEqual(["netstat", "tasklist"]);
@@ -57,6 +57,10 @@ describe("listeningPorts", () => {
   it("falls back to a placeholder name when tasklist has no row", async () => {
     const ports = await listeningPorts(fakeExec(NETSTAT, "").exec);
     expect(ports.every((p) => p.process === "?")).toBe(true);
+    // An unnamed owner is not evidence of plumbing — only the well-known ports
+    // still demote, so a dev server on a locked-down box stays visible.
+    expect(ports.find((p) => p.port === 8790)!.dev).toBe(true);
+    expect(ports.find((p) => p.port === 135)!.dev).toBe(false);
   });
 
   it("still lists ports when tasklist fails outright", async () => {
@@ -65,7 +69,29 @@ describe("listeningPorts", () => {
       return NETSTAT;
     };
     const ports = await listeningPorts(exec);
-    expect(ports.map((p) => p.port)).toEqual([135, 445, 8790]);
+    expect(ports.map((p) => p.port)).toEqual([8790, 135, 445]);
+  });
+
+  it("demotes system owners and the ephemeral RPC range, keeps unfamiliar dev owners", async () => {
+    const netstat = `
+  TCP    0.0.0.0:5432           0.0.0.0:0              LISTENING       10
+  TCP    0.0.0.0:49670          0.0.0.0:0              LISTENING       11
+  TCP    0.0.0.0:9229           0.0.0.0:0              LISTENING       12
+  TCP    0.0.0.0:5985           0.0.0.0:0              LISTENING       13
+`;
+    const tasklist = `
+"com.docker.backend.exe","10","Console","1","1 K"
+"node.exe","11","Console","1","1 K"
+"lsass.exe","12","Services","0","1 K"
+"ruby.exe","13","Console","1","1 K"
+`;
+    const ports = await listeningPorts(fakeExec(netstat, tasklist).exec);
+    expect(ports.map((p) => [p.port, p.dev])).toEqual([
+      [5432, true], // unfamiliar owner, ordinary port — a dev server until proven otherwise
+      [5985, false], // WinRM, whoever claims to own it
+      [9229, false], // lsass
+      [49670, false], // ephemeral RPC range, even for node
+    ]);
   });
 
   it("returns nothing for empty output", async () => {

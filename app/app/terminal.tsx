@@ -157,8 +157,17 @@ export default function TerminalScreen() {
             <MonoText numberOfLines={1}>{open.cwd}</MonoText>
           )}
         </View>
+        {/* Same grammar as Stop on the Tools screen: a labelled pill, not a bare
+            glyph. Killing a shell and stopping a service are one act, and the
+            product should only have one way of asking for it. */}
         {open !== null && (
-          <IconButton icon={Trash2} label={`Kill ${open.title}`} tint="danger" onPress={() => setKillTarget(open)} />
+          <Button
+            label="Kill"
+            variant="danger"
+            icon={Trash2}
+            accessibilityLabel={`Kill ${open.title}`}
+            onPress={() => setKillTarget(open)}
+          />
         )}
       </View>
 
@@ -233,8 +242,14 @@ export default function TerminalScreen() {
               autoCorrect={false}
               autoCapitalize="none"
             />
+            {/* Labelled, exactly as new.tsx does it: unlabelled, a filled row
+                straight under an empty input reads as a second input rather
+                than as a folder you can tap. */}
             {recents.length > 0 && (
               <View style={styles.recents}>
+                <Text variant="sub" color="textMut" style={styles.sectionLabel}>
+                  RECENT
+                </Text>
                 {recents.map((r) => (
                   <Pressable
                     key={r}
@@ -389,35 +404,15 @@ function TerminalRow({
           <MonoText numberOfLines={1}>{term.cwd}</MonoText>
         </View>
       </Pressable>
-      <IconButton icon={Trash2} label={`Kill ${term.title}`} tint="danger" disabled={disabled} onPress={onKill} />
+      <Button
+        label="Kill"
+        variant="danger"
+        icon={Trash2}
+        accessibilityLabel={`Kill ${term.title}`}
+        disabled={disabled}
+        onPress={onKill}
+      />
     </View>
-  );
-}
-
-function IconButton({
-  icon: Icon,
-  label,
-  tint,
-  disabled = false,
-  onPress,
-}: {
-  icon: LucideIcon;
-  label: string;
-  tint: "danger" | "text";
-  disabled?: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [styles.iconBtn, disabled && { opacity: opacity.disabled }, pressed && { opacity: opacity.pressed }]}
-    >
-      <Icon size={iconSize.md} color={color[tint]} strokeWidth={stroke.icon} />
-    </Pressable>
   );
 }
 
@@ -472,7 +467,6 @@ const styles = StyleSheet.create({
     borderColor: color.border,
     backgroundColor: color.surface,
   },
-  iconBtn: { width: touch.min, height: touch.min, alignItems: "center", justifyContent: "center" },
 
   recents: { gap: space(1.5) },
   recentRow: {

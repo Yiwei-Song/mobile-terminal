@@ -9,6 +9,30 @@ export type { Port };
 // interface, not a service on this box the phone can reach through the daemon.
 const LOCAL = new Set(["0.0.0.0", "127.0.0.1", "[::]", "[::1]", "*"]);
 
+// Windows' own plumbing. None of it answers HTTP, so a row for it in a "your PC's
+// dev servers" list is a tap that renders a blank frame — a dead end, and there
+// are always more of these than there are dev servers.
+//
+// Demote by owner *or* by port, because either alone leaks: a service hosted in
+// svchost can sit on any port, and 445 is System, which owns nothing else you'd
+// want. Kept deliberately small — this decides what is HIDDEN by default, so a
+// name that is merely unfamiliar (docker, jetbrains, a stray python) must stay
+// out of it. Everything not named here is a dev server as far as the phone is
+// concerned; the app still offers "show all ports" for what this gets wrong.
+const SYSTEM_OWNERS = new Set([
+  "system", "svchost.exe", "lsass.exe", "services.exe", "wininit.exe",
+  "spoolsv.exe", "smss.exe", "csrss.exe", "searchindexer.exe", "msmpeng.exe",
+]);
+// 135 RPC endpoint mapper · 139/445 NetBIOS+SMB · 5040 remote-management ·
+// 3389 RDP · 5985/5986 WinRM · 7680 delivery optimization.
+const SYSTEM_PORTS = new Set([135, 137, 138, 139, 445, 3389, 5040, 5985, 5986, 7680]);
+// Windows hands dynamic RPC servers 49152+. They churn between reboots, so even
+// the rare real one is not something you would go looking for by number.
+const EPHEMERAL = 49152;
+
+const isDev = (port: number, process: string): boolean =>
+  !SYSTEM_PORTS.has(port) && port < EPHEMERAL && !SYSTEM_OWNERS.has(process.toLowerCase());
+
 export async function listeningPorts(exec: Exec): Promise<Port[]> {
   const names = await processNames(exec);
   const byPort = new Map<number, Port>();
@@ -26,9 +50,14 @@ export async function listeningPorts(exec: Exec): Promise<Port[]> {
     if (!LOCAL.has(m[1]!.slice(0, at)) || !Number.isInteger(port)) continue;
     const pid = Number(m[2]);
     // Dedup by port: 0.0.0.0:135 and [::]:135 are one service listening twice.
-    if (!byPort.has(port)) byPort.set(port, { port, pid, process: names.get(pid) ?? "?" });
+    if (byPort.has(port)) continue;
+    const process = names.get(pid) ?? "?";
+    byPort.set(port, { port, pid, process, dev: isDev(port, process) });
   }
-  return [...byPort.values()].sort((a, b) => a.port - b.port);
+  // Dev servers first, then by port. The phone shows this order as given: the
+  // screen's promise is "your PC's dev servers", so those have to be the rows
+  // you land on, not the ones you scroll past.
+  return [...byPort.values()].sort((a, b) => Number(b.dev) - Number(a.dev) || a.port - b.port);
 }
 
 // One tasklist call for the whole table, not one per pid. CSV without headers:

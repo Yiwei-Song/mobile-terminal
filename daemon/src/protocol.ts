@@ -122,6 +122,11 @@ export interface Port {
   port: number;
   pid: number;
   process: string; // "?" when the pid has no tasklist row
+  // False for Windows' own plumbing (RPC, SMB, lsass/svchost/System, the
+  // ephemeral RPC range) — none of it speaks HTTP, so a phone that taps it gets
+  // a blank frame. The picker leads with the true ones and hides the rest
+  // behind "show all"; see ports.ts for the rule.
+  dev: boolean;
 }
 
 // A long-running dev service the phone can start/stop: the spec is what the user

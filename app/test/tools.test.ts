@@ -75,8 +75,8 @@ describe("tools store", () => {
 
     await state().refreshPorts();
     expect(state().ports).toEqual([
-      { port: 5173, pid: 21044, process: "node.exe" },
-      { port: 8790, pid: 8891, process: "?" },
+      { port: 5173, pid: 21044, process: "node.exe", dev: true },
+      { port: 8790, pid: 8891, process: "?", dev: true },
     ]);
 
     await d.close();

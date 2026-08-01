@@ -57,6 +57,10 @@ export default function SessionScreen() {
   // there is no path out but re-pairing. Split it from plain offline.
   const unauthorized = connState === "unauthorized";
   const current = asks[0];
+  // The prompt this session was started with, as far as the phone can know it:
+  // the daemon derives `title` from the prompt's first line. Blank on a dead
+  // session — "here is what you asked" is a promise about something still going.
+  const opening = status !== undefined && status !== "dead" ? (session?.title ?? null) : null;
 
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => setJump(showJump(e.nativeEvent.contentOffset.y));
   const toLatest = () => listRef.current?.scrollToOffset({ offset: 0, animated: true });
@@ -112,11 +116,27 @@ export default function SessionScreen() {
       >
         <View style={styles.transcript}>
           {data.length === 0 ? (
-            <EmptyState
-              icon={MessageSquare}
-              title="No messages yet"
-              body="Anything you and the agent say in this session shows up here."
-            />
+            // A live session always started from something you said, and the
+            // transcript is only assembled from pushed events — so a phone that
+            // was not connected when it started has nothing, and "No messages
+            // yet" reads as if the session were empty. The title *is* the
+            // opening prompt (the daemon takes its first line), so show it as
+            // sent and say what is being waited for. Only when there is one:
+            // a dead session with nothing to show keeps the neutral copy.
+            opening !== null ? (
+              <View style={styles.opening}>
+                <TranscriptItem item={{ id: "opening", kind: "text", role: "user", text: opening }} />
+                <Text variant="sub" color="textMut" style={styles.openingNote}>
+                  {status === "running" ? "Waiting for the agent's first reply…" : "Nothing back yet."}
+                </Text>
+              </View>
+            ) : (
+              <EmptyState
+                icon={MessageSquare}
+                title="No messages yet"
+                body="Anything you and the agent say in this session shows up here."
+              />
+            )
           ) : (
             <>
               <FlatList
@@ -274,6 +294,8 @@ const styles = StyleSheet.create({
   },
   offlineRow: { flexDirection: "row", alignItems: "center", gap: space(1) },
   transcript: { flex: 1 },
+  opening: { paddingVertical: space(2), gap: space(1) },
+  openingNote: { textAlign: "right" },
   listContent: { paddingVertical: space(2), gap: space(2) },
   separator: { height: space(1) },
   jump: {

@@ -57,13 +57,16 @@ const powerState = { keepAwake: true, ecoMode: false };
 // What ports.list would return on a box mid-work: the dev servers you came for,
 // mixed with the Windows services that are always there — because that is what
 // the picker actually has to stay readable against.
+// In the daemon's order: dev servers first, Windows' plumbing after them (the
+// picker hides that tail behind "show all ports").
 const ports: Port[] = [
-  { port: 135, pid: 1180, process: "svchost.exe" },
-  { port: 445, pid: 4, process: "System" },
-  { port: 3333, pid: 17708, process: "node.exe" },
-  { port: 5173, pid: 21044, process: "node.exe" },
-  { port: 5432, pid: 6620, process: "com.docker.backend.exe" },
-  { port: 8790, pid: 8891, process: "node.exe" },
+  { port: 3333, pid: 17708, process: "node.exe", dev: true },
+  { port: 5173, pid: 21044, process: "node.exe", dev: true },
+  { port: 5432, pid: 6620, process: "com.docker.backend.exe", dev: true },
+  { port: 8790, pid: 8891, process: "node.exe", dev: true },
+  { port: 135, pid: 1180, process: "svchost.exe", dev: false },
+  { port: 445, pid: 4, process: "System", dev: false },
+  { port: 49670, pid: 1180, process: "svchost.exe", dev: false },
 ];
 
 // One of each state, so the screen has to render both buttons and both dots.

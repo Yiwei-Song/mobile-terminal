@@ -24,6 +24,15 @@ describe("create", () => {
     expect(info.termId).toMatch(/^[0-9a-f-]{36}$/);
   });
 
+  it("resolves a relative cwd to an absolute one (the phone renders it as the subtitle)", () => {
+    const h = harness();
+    const info = h.mgr.create({ ...CREATE, cwd: "." });
+    expect(info.cwd).toBe(process.cwd());
+    // The pty is spawned in the resolved folder too, so the row and the shell
+    // can never disagree about where it is.
+    expect(h.spawns[0].opts).toMatchObject({ cwd: process.cwd() });
+  });
+
   it("honours an explicit shell", () => {
     const h = harness();
     const info = h.mgr.create({ ...CREATE, shell: "cmd.exe" });

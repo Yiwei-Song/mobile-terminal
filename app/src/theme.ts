@@ -1,3 +1,5 @@
+import type { TextStyle } from "react-native";
+
 export const color = {
   bg: "#0B1220",          // app background (near-black blue, OLED-friendly)
   surface: "#121B2E",     // cards
@@ -46,6 +48,18 @@ export const icon = { sm: 16, md: 20, lg: 24, xl: 40 } as const;
 
 /** Letter spacing for all-caps section labels. */
 export const tracking = { label: 1 } as const;
+
+/**
+ * Machine text is quoted, not typeset. JetBrains Mono draws `==` as ≡, `!=` as ≠
+ * and `=>` as ⇒ by default, which is charming in an editor and wrong here: this
+ * app's whole job is showing you source and commands you did not type, and a
+ * glyph that is not in the file is a lie you cannot see through on a phone.
+ * `no-contextual` is the one that kills the arrows; `no-common-ligatures` the
+ * fi/fl pairs. Applied by MonoText, so every path, diff and code body has it.
+ */
+export const noLigatures: Pick<TextStyle, "fontVariant"> = {
+  fontVariant: ["no-common-ligatures", "no-contextual"],
+};
 
 /**
  * Diff line backgrounds: accent/danger at low alpha, so a whole line reads as

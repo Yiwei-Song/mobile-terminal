@@ -44,7 +44,11 @@
   // ponytail: hand-rolled fit instead of @xterm/addon-fit — one measurement and
   // a division, against one more vendored file to serve. Measure with the same
   // font/size the terminal renders in, then floor so we never overflow the box.
-  const cell = (() => {
+  // Measured on every fit, not once at load: a probe that runs before the font
+  // is ready measures a face the terminal never renders in, and the pty's
+  // columns are where the SHELL decides to wrap — off by one there is output
+  // breaking mid-word in the middle of the screen for the life of the terminal.
+  const cellSize = () => {
     const probe = document.createElement("div");
     probe.style.cssText = "position:absolute;visibility:hidden;white-space:pre;font-family:" +
       FONT + ";font-size:" + FONT_SIZE + "px;line-height:normal";
@@ -53,17 +57,30 @@
     const r = probe.getBoundingClientRect();
     probe.remove();
     return { w: r.width / 100, h: Math.ceil(r.height * LINE_HEIGHT) };
-  })();
+  };
+  // The geometry the terminal ACTUALLY renders at, or null when there is none to
+  // read yet: a page laid out at 0x0 (a WebView not on screen, a background tab)
+  // must not be turned into a 2-column pty that then never grows. Null is "ask
+  // again", never a guess.
   const fit = () => {
     const s = getComputedStyle(box);
     const w = box.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight);
     const h = box.clientHeight - parseFloat(s.paddingTop) - parseFloat(s.paddingBottom);
-    // A 0x0 box (page not laid out yet) would resize the pty to nothing.
+    const cell = cellSize();
+    if (!(w > 0 && h > 0 && cell.w > 0 && cell.h > 0)) return null;
     const cols = Math.max(2, Math.floor(w / cell.w)), rows = Math.max(1, Math.floor(h / cell.h));
     if (cols !== term.cols || rows !== term.rows) term.resize(cols, rows);
     return { cols, rows };
   };
-  fit();
+  // Resolves on the first real measurement. A 0x0 box fires no event of its own
+  // — the ResizeObserver below is what reports that layout finally happened.
+  let awaiting = null;
+  const geometry = async () => {
+    // Fonts before maths: measuring the fallback face and rendering the real one
+    // is the same bug as measuring a 0x0 box, only harder to see.
+    try { await document.fonts.ready; } catch {}
+    return fit() ?? new Promise((resolve) => { awaiting = resolve; });
+  };
 
   // --- wire ----------------------------------------------------------------
   let ws = null, seq = 0, termId = null, cfg = null;
@@ -115,15 +132,20 @@
       }
       if (m.type !== "auth.ok") return;
       try {
-        const { cols, rows } = fit();
+        // Never create against an unmeasured box: this awaits a real one.
+        const first = await geometry();
         if (c.termId) {
-          // Reattaching: the daemon already has the size the other client set,
-          // but this screen is what is being looked at now.
+          // Reattaching: the daemon still holds whatever size the other client
+          // set, but this screen is what is being looked at now.
           termId = c.termId;
-          await call("term.resize", { termId, cols, rows });
         } else {
-          termId = (await call("term.create", { cwd: c.cwd || ".", cols, rows })).termId;
+          termId = (await call("term.create", { cwd: c.cwd || ".", cols: first.cols, rows: first.rows })).termId;
         }
+        // Re-assert against the box as it is NOW: the round-trip above is long
+        // enough for a rotation or a keyboard, and any resize the observer tried
+        // to send during it was dropped for want of a termId.
+        const g = fit() || first;
+        await call("term.resize", { termId, cols: g.cols, rows: g.rows });
         // Replay before the live feed can interleave: term.data for this id can
         // only arrive after term.create returned, and this await runs first.
         term.reset();
@@ -175,13 +197,20 @@
   // only the box does. It covers rotation and the on-screen keyboard too.
   // Debounced because an Android keyboard animation fires it every frame.
   let rt = null;
-  new ResizeObserver(() => {
-    clearTimeout(rt);
-    rt = setTimeout(() => {
-      const { cols, rows } = fit();
-      if (termId) call("term.resize", { termId, cols, rows }).catch(() => {});
-    }, 120);
-  }).observe(box);
+  const remeasure = () => {
+    const g = fit();
+    if (g === null) return; // still no layout; the next tick is the retry
+    if (awaiting) { const resolve = awaiting; awaiting = null; resolve(g); }
+    if (termId) call("term.resize", { termId, cols: g.cols, rows: g.rows }).catch(() => {});
+  };
+  const later = () => { clearTimeout(rt); rt = setTimeout(remeasure, 120); };
+  new ResizeObserver(later).observe(box);
+  // Belt to the observer's braces for the keyboard: on the browsers where the
+  // soft keyboard shrinks the layout viewport the box changes and the observer
+  // has it already, but where it only shrinks the *visual* one this is the only
+  // event that fires. Same debounce, and a fit that measures the same numbers
+  // sends nothing.
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", later);
   overlay.addEventListener("click", () => { if (cfg) connect(cfg); });
 
   // --- host handshake ------------------------------------------------------

@@ -3,6 +3,7 @@
 // spawn a real shell; one test injects the real @lydell/node-pty to prove the
 // native ConPTY binding actually works.
 import { randomUUID } from "crypto";
+import { resolve } from "path";
 import type { TermInfo } from "./protocol.js";
 
 // The wire shape lives in protocol.ts (the app re-exports it); re-exported here
@@ -51,9 +52,13 @@ export class PtyManager {
   create(opts: { cwd: string; cols: number; rows: number; shell?: string }): TermInfo {
     const shell = opts.shell ?? defaultShell();
     const termId = randomUUID();
+    // Absolute, always: "." is a legal cwd (it means the daemon's own folder)
+    // but it is not an answer to "where is this shell?" — the phone renders this
+    // string as the terminal's subtitle, and a bare dot tells nobody anything.
+    const cwd = resolve(opts.cwd);
     const pty = this.deps.pty.spawn(shell, [], {
       name: "xterm-color",
-      cwd: opts.cwd,
+      cwd,
       cols: opts.cols,
       rows: opts.rows,
       env: process.env,
@@ -61,7 +66,7 @@ export class PtyManager {
     const info: TermInfo = {
       termId,
       title: shell,
-      cwd: opts.cwd,
+      cwd,
       cols: opts.cols,
       rows: opts.rows,
     };
