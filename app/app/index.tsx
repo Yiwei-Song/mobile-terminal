@@ -3,6 +3,7 @@ import { FlatList, Pressable, RefreshControl, StyleSheet, View } from "react-nat
 import { router, useFocusEffect } from "expo-router";
 import { Plus, ShieldAlert, TerminalSquare, WifiOff, X } from "lucide-react-native";
 
+import { ActionRow } from "../src/components/ActionRow";
 import { Button } from "../src/components/Button";
 import { Card } from "../src/components/Card";
 import { EmptyState } from "../src/components/EmptyState";
@@ -83,6 +84,17 @@ export default function Home() {
   return (
     <Screen>
       <MachineBar />
+
+      {/* One compact row, never a second screen of chrome: the list below it is
+          still what the eye lands on. Same live-PC rule as the FAB. */}
+      <ActionRow
+        disabled={!canStart}
+        hint={
+          connState === "unauthorized"
+            ? "This PC turned the phone away — re-pair to open these."
+            : "Offline — these need a live connection to your PC."
+        }
+      />
 
       {lastError !== null && (
         <Card accentEdge="danger" style={styles.error}>

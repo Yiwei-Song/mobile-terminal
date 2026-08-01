@@ -118,7 +118,12 @@ export default function Preview() {
           )}
         </View>
         {port === null && (
-          <IconButton icon={RefreshCw} label="Refresh ports" onPress={() => void refreshPorts().catch(() => {})} />
+          <IconButton
+            icon={RefreshCw}
+            label="Refresh ports"
+            disabled={offline}
+            onPress={() => void refreshPorts().catch(() => {})}
+          />
         )}
       </View>
 
@@ -179,7 +184,15 @@ export default function Preview() {
           icon={MonitorSmartphone}
           title="No dev servers listening"
           body="Start one and it shows up here — anything listening on your PC is one tap from rendering at phone size."
-          action={<Button label="Refresh" icon={RefreshCw} variant="outline" onPress={() => void refreshPorts().catch(() => {})} />}
+          action={
+            <Button
+              label="Refresh"
+              icon={RefreshCw}
+              variant="outline"
+              disabled={offline}
+              onPress={() => void refreshPorts().catch(() => {})}
+            />
+          }
         />
       ) : (
         <ScrollView contentContainerStyle={styles.scroll}>
@@ -187,7 +200,10 @@ export default function Preview() {
             LISTENING ON {host.toUpperCase()}
           </Text>
           {ports.map((p) => (
-            <PortRow key={p.port} port={p} onOpen={() => open(p.port)} />
+            // The page itself is fetched from the PC, not through the socket —
+            // but if the socket is down the wifi is, and the frame would only
+            // render a browser error. Say so up front instead.
+            <PortRow key={p.port} port={p} disabled={offline} onOpen={() => open(p.port)} />
           ))}
         </ScrollView>
       )}
@@ -197,13 +213,15 @@ export default function Preview() {
 
 // One listener: the port is the thing you recognise, the process name is how you
 // tell two node servers apart.
-function PortRow({ port, onOpen }: { port: Port; onOpen: () => void }) {
+function PortRow({ port, disabled, onOpen }: { port: Port; disabled: boolean; onOpen: () => void }) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`Preview port ${port.port}`}
+      accessibilityState={{ disabled }}
+      disabled={disabled}
       onPress={onOpen}
-      style={({ pressed }) => [styles.portRow, pressed && { opacity: opacity.pressed }]}
+      style={({ pressed }) => [styles.portRow, disabled && { opacity: opacity.disabled }, pressed && { opacity: opacity.pressed }]}
     >
       <MonoText color="text" style={styles.portNum}>
         :{port.port}

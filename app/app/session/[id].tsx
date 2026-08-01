@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { ArrowDown, GitCompare, MessageSquare, ShieldAlert, StopCircle, WifiOff } from "lucide-react-native";
+import type { LucideIcon } from "lucide-react-native";
 
 import { ApprovalCard } from "../../src/components/ApprovalCard";
 import { BackButton } from "../../src/components/BackButton";
@@ -62,43 +63,46 @@ export default function SessionScreen() {
 
   return (
     <Screen>
+      {/* Two rows, not five controls in one: the title is the whole width of the
+          first, so it stops truncating at 390pt, and the state and the actions
+          share the second. Nothing moved out of reach — everything is still one
+          tap, still ≥48. */}
       <View style={styles.header}>
         <BackButton />
-        <View style={styles.headText}>
-          <Text variant="h2" numberOfLines={1}>
-            {session?.title ?? "Session"}
-          </Text>
-          {offline && (
-            <View style={styles.offlineRow}>
-              <WifiOff size={iconSize.sm} color={color.textMut} strokeWidth={stroke.icon} />
-              <Text variant="sub" color="textMut">
-                Offline
-              </Text>
-            </View>
-          )}
-        </View>
+        <Text variant="h2" numberOfLines={1} style={styles.flex}>
+          {session?.title ?? "Session"}
+        </Text>
+      </View>
+
+      <View style={styles.actions}>
+        {status !== undefined && <StatusChip status={status} />}
+        {offline && (
+          <View style={styles.offlineRow}>
+            <WifiOff size={iconSize.sm} color={color.textMut} strokeWidth={stroke.icon} />
+            <Text variant="sub" color="textMut">
+              Offline
+            </Text>
+          </View>
+        )}
+        <View style={styles.flex} />
         {/* What the agent actually did to the working tree, one tap away —
             reviewing the diff is the other half of answering an approval. */}
         {session !== undefined && (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Changes in ${session.cwd}`}
+          <HeaderAction
+            icon={GitCompare}
+            label="Changes"
+            a11y={`Changes in ${session.cwd}`}
             onPress={() => router.push({ pathname: "/files", params: { diff: session.cwd } })}
-            style={({ pressed }) => [styles.iconBtn, pressed && { opacity: opacity.pressed }]}
-          >
-            <GitCompare size={iconSize.lg} color={color.textMut} strokeWidth={stroke.icon} />
-          </Pressable>
+          />
         )}
-        {status !== undefined && <StatusChip status={status} />}
         {status === "running" && (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Interrupt the agent"
+          <HeaderAction
+            icon={StopCircle}
+            label="Stop"
+            tint="danger"
+            a11y="Interrupt the agent"
             onPress={() => setConfirmStop(true)}
-            style={({ pressed }) => [styles.iconBtn, pressed && { opacity: opacity.pressed }]}
-          >
-            <StopCircle size={iconSize.lg} color={color.danger} strokeWidth={stroke.icon} />
-          </Pressable>
+          />
         )}
       </View>
 
@@ -216,6 +220,36 @@ export default function SessionScreen() {
   );
 }
 
+// A secondary header action: icon *and* word, because an unlabelled glyph in a
+// row of two is a guess. Text-sized, 48 tall.
+function HeaderAction({
+  icon: Icon,
+  label,
+  a11y,
+  tint = "textMut",
+  onPress,
+}: {
+  icon: LucideIcon;
+  label: string;
+  a11y: string;
+  tint?: "textMut" | "danger";
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={a11y}
+      onPress={onPress}
+      style={({ pressed }) => [styles.action, pressed && { opacity: opacity.pressed }]}
+    >
+      <Icon size={iconSize.md} color={color[tint]} strokeWidth={stroke.icon} />
+      <Text variant="sub" color={tint}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
 const Separator = () => <View style={styles.separator} />;
 
 const JUMP = space(9);
@@ -227,11 +261,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: space(2),
     paddingTop: space(2),
-    paddingBottom: space(3),
   },
-  // Negative margins claim the 48dp hit box without widening the header bar.
-  iconBtn: { width: touch.min, height: touch.min, alignItems: "center", justifyContent: "center", marginVertical: -space(2) },
-  headText: { flex: 1, gap: space(0.5) },
+  actions: { flexDirection: "row", alignItems: "center", gap: space(2), paddingBottom: space(2) },
+  action: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space(1.5),
+    minHeight: touch.min,
+    paddingHorizontal: space(2),
+    // Claims the 48dp hit box without pushing the transcript down for it.
+    marginVertical: -space(1),
+  },
   offlineRow: { flexDirection: "row", alignItems: "center", gap: space(1) },
   transcript: { flex: 1 },
   listContent: { paddingVertical: space(2), gap: space(2) },

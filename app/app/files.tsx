@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text as RNText, View } from "react-native";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
-import { ChevronRight, File as FileIcon, Folder, FolderOpen, GitCompare, ShieldAlert, WifiOff } from "lucide-react-native";
+import { ChevronRight, File as FileIcon, Folder, FolderOpen, GitCompare, ShieldAlert, Wifi, WifiOff } from "lucide-react-native";
 import type { LucideIcon } from "lucide-react-native";
 import type { Entry } from "@shared/protocol";
 
@@ -14,6 +14,7 @@ import { MonoText } from "../src/components/MonoText";
 import { Screen } from "../src/components/Screen";
 import { Text } from "../src/components/Text";
 import { demoFs, demoMode, seedDemo } from "../src/lib/demo";
+import { loadPairing, pairingUrl } from "../src/lib/pairing";
 import { bytes, crumbs, cwdTail } from "../src/lib/format";
 import { parseMarkdown, type MdBlock, type MdSpan } from "../src/lib/markdown";
 import { useWorkbench } from "../src/lib/store";
@@ -46,6 +47,7 @@ export default function Files() {
   const readFile = useWorkbench((s) => s.readFile);
   const loadDiff = useWorkbench((s) => s.loadDiff);
   const loadGitStatus = useWorkbench((s) => s.loadGitStatus);
+  const connect = useWorkbench((s) => s.connect);
 
   // Demo mode has no socket, so the same four calls come from the seeded tree.
   const fs = useMemo(
@@ -117,6 +119,14 @@ export default function Files() {
       .finally(() => setBusy(false));
   };
 
+  // The same "try now" the other screens offer: connect() on the pairing we are
+  // already on cancels the backoff and opens a socket immediately.
+  const retry = () => {
+    void loadPairing().then((p) => {
+      if (p !== null) connect(pairingUrl(p), p.token);
+    });
+  };
+
   const back = () => {
     if (viewing !== null) return setViewing(null);
     if (showDiff && !fromSession) return setShowDiff(false);
@@ -177,7 +187,9 @@ export default function Files() {
           <Button label="Re-pair" variant="outline" onPress={() => router.push({ pathname: "/pair", params: { edit: "1" } })} />
         </Banner>
       ) : offline ? (
-        <Banner icon={WifiOff} text="Offline — last-known contents shown. Opening anything new needs a live connection." />
+        <Banner icon={WifiOff} text="Offline — last-known contents shown. Opening anything new needs a live connection.">
+          <Button label="Reconnect" variant="outline" icon={Wifi} onPress={retry} />
+        </Banner>
       ) : null}
 
       {lastError !== null && (
@@ -273,7 +285,16 @@ export default function Files() {
               {busy ? "Reading folder…" : dir === null ? "Pick a folder above to start browsing." : "This folder is empty."}
             </Text>
           ) : (
-            entries.map((e) => <Row key={e.path} entry={e} onPress={() => (e.dir ? openDir(e.path) : openFile(e.path))} />)
+            entries.map((e) => (
+              <Row
+                key={e.path}
+                entry={e}
+                // Reading anything not already in hand needs the socket; the
+                // banner above says so, and a row that cannot open says it too.
+                disabled={offline}
+                onPress={() => (e.dir ? openDir(e.path) : openFile(e.path))}
+              />
+            ))
           )}
         </ScrollView>
       )}
@@ -283,14 +304,16 @@ export default function Files() {
 
 // Folders first, then files — the daemon sorts that way and the icon repeats it,
 // so the order never has to be inferred from the names.
-function Row({ entry, onPress }: { entry: Entry; onPress: () => void }) {
+function Row({ entry, disabled, onPress }: { entry: Entry; disabled: boolean; onPress: () => void }) {
   const Icon = entry.dir ? Folder : FileIcon;
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`${entry.dir ? "Open folder" : "Open file"} ${entry.name}`}
+      accessibilityState={{ disabled }}
+      disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => [styles.row, pressed && { opacity: opacity.pressed }]}
+      style={({ pressed }) => [styles.row, disabled && { opacity: opacity.disabled }, pressed && { opacity: opacity.pressed }]}
     >
       <Icon size={iconSize.md} color={entry.dir ? color.info : color.idle} strokeWidth={stroke.icon} />
       <MonoText color="text" numberOfLines={1} style={styles.rowName}>
