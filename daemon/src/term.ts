@@ -72,14 +72,26 @@ export class PtyManager {
     this.terms.set(termId, term);
 
     pty.onData((data) => {
-      term.buf = (term.buf + data).slice(-SCROLLBACK_CAP); // keep the TAIL
+      term.buf += data;
+      // Hysteresis: slicing on every chunk copies the whole buffer once it's
+      // full (64KB memcpy per chunk). Let it grow to 2x, then trim — amortized
+      // O(1) per byte, and memory is still bounded (2 * cap worst case).
+      if (term.buf.length > SCROLLBACK_CAP * 2) {
+        const tail = term.buf.slice(-SCROLLBACK_CAP);
+        // Then drop the partial first line: an arbitrary cut can land inside an
+        // ANSI escape (garbage frame on replay) or between a surrogate pair
+        // (broken glyph). A line boundary is safe for both. Bounded lookahead,
+        // so a newline-less blob can't drop the whole buffer.
+        const nl = tail.indexOf("\n");
+        term.buf = nl !== -1 && nl < 4096 ? tail.slice(nl + 1) : tail;
+      }
       this.onData(termId, data);
     });
     pty.onExit(({ exitCode }) => {
       this.terms.delete(termId);
       this.onExit(termId, exitCode);
     });
-    return info;
+    return { ...info }; // copy: resize() mutates the live info, a stashed one must not change
   }
 
   // write/resize/kill on an unknown id are silent no-ops: ids come off the wire
@@ -107,7 +119,7 @@ export class PtyManager {
   }
 
   list(): TermInfo[] {
-    return [...this.terms.values()].map((t) => t.info);
+    return [...this.terms.values()].map((t) => ({ ...t.info })); // copies, not the live info
   }
 
   scrollback(termId: string): string {

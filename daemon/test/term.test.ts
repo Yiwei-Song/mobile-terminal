@@ -62,6 +62,14 @@ describe("create", () => {
     expect(a.termId).not.toBe(b.termId);
     expect(h.mgr.list().map((t) => t.termId)).toEqual([a.termId, b.termId]);
   });
+
+  it("returns a copy, so a stashed TermInfo doesn't mutate under a later resize", () => {
+    const h = harness();
+    const info = h.mgr.create(CREATE);
+    h.mgr.resize(info.termId, 120, 40);
+    expect(info.cols).toBe(80); // caller's copy is stale, as it should be
+    expect(h.mgr.list()[0].cols).toBe(120); // the manager's view moved on
+  });
 });
 
 describe("write / resize / kill forward to the pty", () => {
@@ -121,20 +129,37 @@ describe("data / scrollback", () => {
     expect(h.mgr.scrollback(termId)).toBe("hello");
   });
 
-  it("trims scrollback at the cap and keeps the TAIL", () => {
+  it("bounds scrollback at 2x the cap and keeps the TAIL", () => {
     const h = harness();
     const { termId } = h.mgr.create(CREATE);
     const CAP = 64 * 1024;
-    h.children[0].emit("A".repeat(CAP));
+    // Trimming is hysteretic (only past 2x cap), so drive it well past that
+    // with many chunks and assert the BOUND plus tail preservation.
+    for (let i = 0; i < 10; i++) h.children[0].emit("A".repeat(CAP / 2));
     h.children[0].emit("TAIL");
     const sb = h.mgr.scrollback(termId);
-    expect(sb).toHaveLength(CAP);
+    expect(sb.length).toBeLessThanOrEqual(CAP * 2); // really trimmed, not unbounded
+    expect(sb.length).toBeGreaterThanOrEqual(CAP); // and it kept a full cap of tail
     expect(sb.endsWith("TAIL")).toBe(true);
     expect(sb.startsWith("A")).toBe(true);
     // A single oversized chunk is also trimmed to the tail.
-    h.children[0].emit("B".repeat(CAP * 2) + "END");
-    expect(h.mgr.scrollback(termId)).toHaveLength(CAP);
-    expect(h.mgr.scrollback(termId).endsWith("END")).toBe(true);
+    h.children[0].emit("B".repeat(CAP * 3) + "END");
+    const sb2 = h.mgr.scrollback(termId);
+    expect(sb2.length).toBeLessThanOrEqual(CAP * 2);
+    expect(sb2.endsWith("END")).toBe(true);
+    expect(sb2.startsWith("B")).toBe(true); // the old "A" run is gone
+  });
+
+  it("trims on a line boundary so replay can't start mid-escape / mid-glyph", () => {
+    const h = harness();
+    const { termId } = h.mgr.create(CREATE);
+    const CAP = 64 * 1024;
+    const line = "x".repeat(99) + "\n"; // 100 chars incl. the newline
+    for (let i = 0; i < Math.ceil((CAP * 3) / 100); i++) h.children[0].emit(line);
+    const sb = h.mgr.scrollback(termId);
+    expect(sb.length).toBeLessThanOrEqual(CAP * 2);
+    expect(sb.slice(0, 100)).toBe(line); // starts at a whole line, not a fragment
+    expect(sb.length % 100).toBe(0); // ...and stays line-aligned all the way through
   });
 
   it("scrollback is per-terminal", () => {
