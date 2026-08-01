@@ -31,10 +31,13 @@ export const PreviewView = forwardRef<PreviewHandle, PreviewViewProps>(function 
       title="Preview"
       src={url}
       // No allow-top-navigation: a hostile preview page must not be able to
-      // steer the app window itself. Omitting allow-same-origin is what makes
-      // the rest of the list safe to grant — the page runs in an opaque origin,
-      // so nothing it stores can reach the app's.
-      sandbox="allow-scripts allow-forms allow-popups"
+      // steer the app window itself — that alone is what this sandbox is for.
+      // allow-same-origin IS granted: a dev server is a different origin than
+      // this build (different port), so it only keeps the page's own origin —
+      // it cannot reach ours. Without it the page runs opaque and loses
+      // localStorage/cookies, which breaks most real dev apps and would make
+      // this preview lie about how the site behaves on the phone.
+      sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
       style={{ flex: 1, width: "100%", border: "none", background: canvas }}
     />
   );
