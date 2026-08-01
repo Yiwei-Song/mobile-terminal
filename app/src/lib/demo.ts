@@ -1,4 +1,4 @@
-import type { Entry, Metrics, Proc, SessionRow } from "@shared/protocol";
+import type { Entry, Metrics, Port, Proc, SessionRow, ToolStatus } from "@shared/protocol";
 
 import { useWorkbench, type Approval, type TranscriptItem } from "./store";
 
@@ -53,6 +53,25 @@ const processes: Proc[] = [
 export const DEMO_CPU_HISTORY = [28, 31, 45, 52, 38, 30, 27, 33, 41, 58, 49, 36, 29, 34, 44, 39, 32, 30, 34];
 
 const powerState = { keepAwake: true, ecoMode: false };
+
+// What ports.list would return on a box mid-work: the dev servers you came for,
+// mixed with the Windows services that are always there — because that is what
+// the picker actually has to stay readable against.
+const ports: Port[] = [
+  { port: 135, pid: 1180, process: "svchost.exe" },
+  { port: 445, pid: 4, process: "System" },
+  { port: 3333, pid: 17708, process: "node.exe" },
+  { port: 5173, pid: 21044, process: "node.exe" },
+  { port: 5432, pid: 6620, process: "com.docker.backend.exe" },
+  { port: 8790, pid: 8891, process: "node.exe" },
+];
+
+// One of each state, so the screen has to render both buttons and both dots.
+const tools: ToolStatus[] = [
+  { name: "docker", running: true, pid: 6620, port: 5432 },
+  { name: "web dev server", running: true, pid: 21044, port: 5173 },
+  { name: "playwright server", running: false, port: 3333 },
+];
 
 // Home seeds on every focus, and a second seed would throw away whatever the
 // demo was showing (an answered approval, a scrolled transcript).
@@ -162,6 +181,8 @@ export function seedDemo(): void {
     metrics,
     processes,
     powerState,
+    ports,
+    tools,
     // EXPO_PUBLIC_DEMO_STATE=reboot arms the countdown shot: the machine.reboot
     // push already landed, so the System screen shows the Abort countdown.
     rebootPending: variant === "reboot" ? { delaySec: 15 } : null,

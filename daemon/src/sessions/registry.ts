@@ -7,6 +7,7 @@ import { KeepAwake, lockWorkstation, displayOff, reboot, abortReboot, type Power
 import type { PtyManager } from "../term.js";
 import { allowedRoots, list as listDir, read as readFile, gitStatus, gitDiff, type Exec } from "../files.js";
 import { listeningPorts } from "../ports.js";
+import type { ToolRunner } from "../tools.js";
 import { ClaudeSession, type ClaudeDeps } from "./claude.js";
 import type { Manifest, ManifestEntry } from "./manifest.js";
 
@@ -24,6 +25,7 @@ export interface MachineDeps {
   keepAwake: KeepAwake; // the one keep-awake hold the daemon holds while it runs
   power: PowerDeps; // { spawn, exec } for lock/displayOff/reboot
   pty: PtyManager; // the live terminals; its onData/onExit push term.* events
+  tools: ToolRunner; // the user's declared dev services (tools.json), rides here for the same reason
   // ponytail: git/netstat ride here rather than a second deps bag — this bag is
   // already "the host-level things a handler acts on". Deliberately NOT
   // power.exec: that one is string-based (a shell), and these commands take a
@@ -208,6 +210,17 @@ export class Registry {
 
       case "ports.list":
         return listeningPorts(this.machine.execFile);
+
+      case "tools.list":
+        return this.machine.tools.status();
+
+      // Both throw on a name that is not in tools.json — the phone asked for
+      // something the user never declared, which is an error, not an empty status.
+      case "tools.start":
+        return this.machine.tools.start(params.name);
+
+      case "tools.stop":
+        return this.machine.tools.stop(params.name);
 
       default:
         throw new Error(`unknown method: ${method}`);

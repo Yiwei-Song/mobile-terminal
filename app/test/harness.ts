@@ -38,6 +38,9 @@ export interface Daemon {
   token: string;
   url: string;
   dir: string;
+  /** The fakes behind the daemon: canned si, recorded command lines, execOut
+   *  stubs for netstat/tasklist/git, and the real ToolRunner over a fake spawn. */
+  fm: ReturnType<typeof fakeMachine>;
   close(): Promise<void>;
 }
 
@@ -48,12 +51,13 @@ export async function startDaemon(query: FakeQuery, opts: { dir?: string; port?:
   // Same knot index.ts has: the registry is the server's handler, so it exists
   // before the push it broadcasts through does.
   let pushRef: (e: PushEvent) => void = () => {};
-  const registry = new Registry({ query } as unknown as ClaudeDeps, manifest, (e) => pushRef(e), cfg, fakeMachine().machine);
+  const fm = fakeMachine();
+  const registry = new Registry({ query } as unknown as ClaudeDeps, manifest, (e) => pushRef(e), cfg, fm.machine);
   const srv = await startServer(cfg, (method, params, push) => {
     pushRef = push;
     return registry.handle(method, params);
   });
-  return { port: srv.port, token: cfg.token, url: `ws://127.0.0.1:${srv.port}/ws`, dir, close: srv.close };
+  return { port: srv.port, token: cfg.token, url: `ws://127.0.0.1:${srv.port}/ws`, dir, fm, close: srv.close };
 }
 
 // Real sockets and a real event loop: assertions wait for the condition instead

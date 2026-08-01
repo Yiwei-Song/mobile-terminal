@@ -30,7 +30,10 @@ export type ClientMsg =
   | { type: "req"; id: string; method: "files.read"; params: { path: string } }
   | { type: "req"; id: string; method: "git.status"; params: { cwd: string } }
   | { type: "req"; id: string; method: "git.diff"; params: { cwd: string; file?: string } }
-  | { type: "req"; id: string; method: "ports.list" };
+  | { type: "req"; id: string; method: "ports.list" }
+  | { type: "req"; id: string; method: "tools.list" }
+  | { type: "req"; id: string; method: "tools.start"; params: { name: string } }
+  | { type: "req"; id: string; method: "tools.stop"; params: { name: string } };
 
 // Daemon → client.
 export type ServerMsg =
@@ -121,6 +124,23 @@ export interface Port {
   process: string; // "?" when the pid has no tasklist row
 }
 
+// A long-running dev service the phone can start/stop: the spec is what the user
+// declared in <dataDir>/tools.json, the status is what tools.* answers with.
+// Here for the same reason as the three above — tools.ts imports them back.
+export interface ToolSpec {
+  name: string;
+  command: string;
+  args?: string[];
+  cwd?: string;
+  port?: number; // what it will be listening on, when the user knows
+}
+export interface ToolStatus {
+  name: string;
+  running: boolean;
+  pid?: number;
+  port?: number;
+}
+
 // Terminal output and death. Not session events — a pty has no sessionId, and
 // only the WebView terminal page consumes these.
 export type TermEvent =
@@ -176,6 +196,11 @@ const METHODS = new Map<string, (p: any) => boolean>([
   ["git.status", (p) => str(p?.cwd)],
   ["git.diff", (p) => str(p?.cwd) && (p.file === undefined || str(p.file))],
   ["ports.list", () => true],
+  // The name indexes a spec the USER wrote into tools.json — an unknown one is
+  // refused by the runner, so nothing off the wire ever becomes a command line.
+  ["tools.list", () => true],
+  ["tools.start", (p) => str(p?.name)],
+  ["tools.stop", (p) => str(p?.name)],
 ]);
 
 export function parseClientMsg(raw: string): ClientMsg | null {

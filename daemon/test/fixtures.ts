@@ -3,6 +3,7 @@ import type { SDKAssistantMessage, SDKResultMessage, SDKSystemMessage } from "@a
 import { KeepAwake, type PowerDeps } from "../src/power.js";
 import type { SystemDeps } from "../src/system.js";
 import { PtyManager, type IPty, type PtyDeps } from "../src/term.js";
+import { ToolRunner, type ToolDeps, type ToolSpec } from "../src/tools.js";
 import type { MachineDeps } from "../src/sessions/registry.js";
 import type { Exec } from "../src/files.js";
 
@@ -58,9 +59,41 @@ export function fakePty() {
   return { deps: { pty: { spawn } } satisfies PtyDeps, spawns, children };
 }
 
+// A spawn that starts nothing: records every argv and hands back a child whose
+// exit/error can be fired by the test. Shared by the ToolRunner tests and by
+// fakeMachine — the one thing neither may do is launch a real Docker.
+export function fakeSpawn() {
+  const calls: { command: string; args: string[]; opts: any }[] = [];
+  const children: any[] = [];
+  let pid = 1000;
+  const spawn = ((command: string, args: string[], opts: object) => {
+    calls.push({ command, args, opts: opts as any });
+    const handlers: Record<string, ((a: unknown) => void)[]> = {};
+    const child = {
+      pid: ++pid,
+      kill: vi.fn(),
+      on(ev: string, cb: (a: unknown) => void) {
+        (handlers[ev] ??= []).push(cb);
+        return this;
+      },
+      fire: (ev: string, a?: unknown) => handlers[ev]?.forEach((cb) => cb(a)),
+    };
+    children.push(child);
+    return child;
+  }) as unknown as ToolDeps["spawn"];
+  return { deps: { spawn } satisfies ToolDeps, calls, children };
+}
+
 // A full MachineDeps backed by fakes: real KeepAwake (hold state observable via
 // .active), real snapshot/lock/reboot code over fake si + a recording exec, and
 // a real PtyManager over a fake pty (`children` drives its output/exit).
+// The two specs every registry/app test sees on the tools screen. Named here so
+// a test asserting a status list does not have to restate them.
+export const TOOL_SPECS: ToolSpec[] = [
+  { name: "docker", command: "docker", args: ["compose", "up", "-d"], cwd: "D:\\proj", port: 5432 },
+  { name: "vite", command: "npm", args: ["run", "dev"], port: 5173 },
+];
+
 export function fakeMachine(procs: Parameters<typeof fakeSi>[0] = []) {
   const execCmds: string[] = [];
   const exec = ((cmd: string, cb: (e: unknown) => void) => { execCmds.push(cmd); cb(null); return {}; }) as unknown as PowerDeps["exec"];
@@ -79,8 +112,12 @@ export function fakeMachine(procs: Parameters<typeof fakeSi>[0] = []) {
     execFileCalls.push({ file, args, cwd });
     return execOut[file] ?? "";
   };
-  const machine: MachineDeps = { system: { si: fakeSi(procs) }, keepAwake, power, pty, execFile };
-  return { machine, keepAwake, execCmds, execFileCalls, execOut, pty, ptyFake, onTerm };
+  // A real ToolRunner over a spawn that starts nothing: the tools.* RPCs run
+  // their real code and the test reads the argv the runner built.
+  const toolSpawn = fakeSpawn();
+  const tools = new ToolRunner(toolSpawn.deps, TOOL_SPECS);
+  const machine: MachineDeps = { system: { si: fakeSi(procs) }, keepAwake, power, pty, execFile, tools };
+  return { machine, keepAwake, execCmds, execFileCalls, execOut, pty, ptyFake, onTerm, tools, toolSpawn };
 }
 
 // Shared fake SDK messages. `satisfies`-checked against the real SDK types, so a

@@ -197,3 +197,50 @@ describe("files/git/ports RPCs", () => {
     await h.done();
   });
 });
+
+// tools.* over the real wire. The runner's own behavior is covered in
+// tools.test.ts; what matters here is that the wire reaches it and that a name
+// the user never declared is refused before anything is spawned.
+describe("tools RPCs", () => {
+  it("tools.list returns one status per declared spec", async () => {
+    const h = await harness();
+    expect((await h.call("1", "tools.list")).data).toEqual([
+      { name: "docker", running: false, port: 5432 },
+      { name: "vite", running: false, port: 5173 },
+    ]);
+    await h.done();
+  });
+
+  it("tools.start/stop round-trip through the runner", async () => {
+    const h = await harness();
+    const started = (await h.call("1", "tools.start", { name: "vite" })).data;
+    expect(started).toMatchObject({ name: "vite", running: true, port: 5173 });
+    expect(h.fm.toolSpawn.calls[0]).toMatchObject({ command: "npm", args: ["run", "dev"] });
+    expect((await h.call("2", "tools.list")).data).toMatchObject([{ running: false }, { running: true }]);
+
+    expect((await h.call("3", "tools.stop", { name: "vite" })).data).toMatchObject({ name: "vite", running: false });
+    expect((await h.call("4", "tools.list")).data).toMatchObject([{ running: false }, { running: false }]);
+    await h.done();
+  });
+
+  it("an undeclared name is an RPC error and spawns nothing", async () => {
+    const h = await harness();
+    expect(await h.call("1", "tools.start", { name: "calc" })).toMatchObject({ ok: false, error: /unknown tool/ });
+    expect(h.fm.toolSpawn.calls).toHaveLength(0);
+    await h.done();
+  });
+
+  it("a missing name is rejected by the wire validator", async () => {
+    const h = await harness();
+    // The parser drops the frame entirely, so nothing answers id "1" — assert on
+    // the socket going quiet rather than on a response that never comes.
+    const ws = h.ws;
+    const quiet = new Promise<string>((r) => {
+      ws.once("message", (d) => r(d.toString()));
+      ws.send(JSON.stringify({ type: "req", id: "1", method: "tools.start", params: {} }));
+      setTimeout(() => r("(no answer)"), 100);
+    });
+    expect(await quiet).toBe("(no answer)");
+    await h.done();
+  });
+});

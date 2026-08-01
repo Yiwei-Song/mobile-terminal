@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ConfigInfo, Entry, Metrics, Proc, PushEvent, SessionEvent, SessionRow, SessionStatus, TermInfo } from "@shared/protocol";
+import type { ConfigInfo, Entry, Metrics, Port, Proc, PushEvent, SessionEvent, SessionRow, SessionStatus, TermInfo, ToolStatus } from "@shared/protocol";
 
 import { WorkbenchClient, type ClientOpts, type ConnState } from "./client";
 
@@ -32,6 +32,11 @@ export interface Workbench {
   // The live terminals. Only the list lives here — the bytes belong to the
   // WebView, which holds its own socket straight to the daemon.
   terminals: TermInfo[];
+  // The user's declared dev services (tools.json) and what is listening on the
+  // PC right now. Separate reads: a tool can be running before it binds, and a
+  // port can be open without any tool of ours behind it.
+  tools: ToolStatus[];
+  ports: Port[];
   // The file browser's world. `dir` travels with `entries` so a screen never
   // renders one folder's rows under another's breadcrumb.
   roots: string[];
@@ -73,6 +78,10 @@ export interface Workbench {
   // moment it attaches, so the only thing that matters here is that they are legal.
   createTerminal(cwd: string): Promise<TermInfo>;
   killTerminal(termId: string): Promise<void>;
+  refreshTools(): Promise<void>;
+  startTool(name: string): Promise<void>;
+  stopTool(name: string): Promise<void>;
+  refreshPorts(): Promise<void>;
   refreshRoots(): Promise<void>;
   listDir(dir: string): Promise<void>;
   readFile(path: string): Promise<void>;
@@ -135,6 +144,8 @@ export const useWorkbench = create<Workbench>((set, get) => ({
   processes: [],
   powerState: null,
   terminals: [],
+  tools: [],
+  ports: [],
   roots: [],
   dir: null,
   entries: [],
@@ -197,6 +208,8 @@ export const useWorkbench = create<Workbench>((set, get) => ({
       processes: [],
       powerState: null,
       terminals: [],
+      tools: [],
+      ports: [],
       roots: [],
       dir: null,
       entries: [],
@@ -403,6 +416,29 @@ export const useWorkbench = create<Workbench>((set, get) => ({
     set({ terminals: get().terminals.filter((t) => t.termId !== termId) });
   },
 
+  async refreshTools() {
+    if (client === null) return;
+    // Not tracked: the screen re-asks on focus, and the empty state already
+    // explains itself — same reasoning as the automatic re-list.
+    set({ tools: await client.request<ToolStatus[]>("tools.list") });
+  },
+
+  // Both answer with the tool's new status, so the row reads back what took
+  // rather than guessing. Tracked: the thumb asked for this one.
+  async startTool(name) {
+    set({ tools: replaceTool(get().tools, await track(must().request<ToolStatus>("tools.start", { name }))) });
+  },
+
+  async stopTool(name) {
+    set({ tools: replaceTool(get().tools, await track(must().request<ToolStatus>("tools.stop", { name }))) });
+  },
+
+  async refreshPorts() {
+    if (client === null) return;
+    // Same: the preview screen polls this to notice a dev server coming up.
+    set({ ports: await client.request<Port[]>("ports.list") });
+  },
+
   async refreshRoots() {
     if (client === null) return;
     // Not tracked: the screen re-asks on every focus and a blip there is not
@@ -470,6 +506,12 @@ const bySession = (approvals: Approval[]): Record<string, Approval[]> => {
   for (const a of approvals) (out[a.sessionId] ??= []).push(a);
   return out;
 };
+
+// The answer for one tool, dropped into the list in place. Never appends: the
+// daemon's list is every declared spec, and a name that is not already there
+// came from a tools.json the phone has not re-read yet.
+const replaceTool = (tools: ToolStatus[], next: ToolStatus): ToolStatus[] =>
+  tools.map((t) => (t.name === next.name ? next : t));
 
 const onlyKnown = <T>(map: Record<string, T | undefined>, known: Set<string>): Record<string, T | undefined> =>
   Object.fromEntries(Object.entries(map).filter(([id]) => known.has(id)));

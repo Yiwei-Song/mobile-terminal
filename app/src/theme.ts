@@ -53,3 +53,11 @@ export const tracking = { label: 1 } as const;
  */
 // `24` is ~14% alpha — derived from the accent/danger tokens so they can't drift.
 export const tint = { add: `${color.accent}24`, del: `${color.danger}24` } as const;
+
+/**
+ * The canvas behind someone else's web page (the preview frame). Not part of
+ * `color`: it is deliberately outside the app's palette — a dev page assumes a
+ * browser's white default, and showing this app's dark surface through a
+ * transparent body would make the preview lie about how the page looks.
+ */
+export const canvas = "#FFFFFF";

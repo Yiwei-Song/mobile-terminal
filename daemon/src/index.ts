@@ -11,6 +11,7 @@ import { KeepAwake, lockWorkstation } from "./power.js";
 import { execFileText } from "./files.js";
 import * as pty from "@lydell/node-pty";
 import { PtyManager } from "./term.js";
+import { ToolRunner, loadToolSpecs } from "./tools.js";
 import type { PushEvent } from "./protocol.js";
 import { Manifest } from "./sessions/manifest.js";
 import { Registry } from "./sessions/registry.js";
@@ -33,7 +34,13 @@ process.on("exit", () => {
   keepAwake.stop();
   // Orphaned ptys keep running (and holding their cwd) after the daemon dies.
   terms.killAll();
+  // Same for a `docker compose up` or a vite server the phone started.
+  tools.stopAll();
 });
+
+// The user's declared dev services. No tools.json (the default) means an empty
+// list and a Tools screen that explains how to opt in.
+const tools = new ToolRunner({ spawn }, loadToolSpecs(cfg.dataDir));
 
 // ponytail: single-push-ref; event bus if the daemon grows. The registry is
 // built before the server (it *is* the server's handler), so its push starts as
@@ -60,7 +67,7 @@ const registry = new Registry(
     if (n) notify(cfg.ntfyTopic, n.title, n.body);
   },
   cfg,
-  { system: { si }, keepAwake, power: powerDeps, pty: terms, execFile: execFileText },
+  { system: { si }, keepAwake, power: powerDeps, pty: terms, execFile: execFileText, tools },
 );
 
 // After the manifest is normalized and before any client can read it: clear

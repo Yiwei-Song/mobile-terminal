@@ -22,4 +22,6 @@ export type {
   PushEvent,
   TermEvent,
   TermInfo,
+  ToolSpec,
+  ToolStatus,
 } from "../daemon/src/protocol";
