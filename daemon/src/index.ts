@@ -37,6 +37,13 @@ process.on("exit", () => {
   // Same for a `docker compose up` or a vite server the phone started.
   tools.stopAll();
 });
+// …and route the stop paths that DON'T fire "exit" on their own into it. Ctrl+C
+// (CTRL_C_EVENT), taskkill and logoff terminate Node without running exit
+// handlers, and a tool child is a stdio:"ignore" grandchild behind a shell in no
+// job object — it would outlive us. process.exit() inside the handler skips
+// pending async work, which is fine: the teardown above is all synchronous
+// kill()/spawn() calls.
+for (const sig of ["SIGINT", "SIGTERM", "SIGBREAK"] as const) process.on(sig, () => process.exit(0));
 
 // The user's declared dev services. No tools.json (the default) means an empty
 // list and a Tools screen that explains how to opt in.

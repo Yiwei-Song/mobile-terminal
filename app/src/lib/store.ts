@@ -223,6 +223,14 @@ export const useWorkbench = create<Workbench>((set, get) => ({
 
   async refreshSessions(userInitiated) {
     if (client === null) return;
+    // Everything this list can be evidence about. A sessions.list answer only
+    // speaks for the sessions that already existed when it was asked for: one
+    // created while it was in flight is legitimately missing from it, and
+    // refreshes overlap constantly (newSession does one, and so does every
+    // event naming a not-yet-listed session). Reading that absence as "removed"
+    // is how a brand-new session's buffered echo — the only copy of the user's
+    // own prompt, since nothing ever re-sends a session.text — was thrown away.
+    const asked = new Set([...get().sessions.map((s) => s.sessionId), ...buffered.map((e) => e.sessionId)]);
     refreshing = true;
     try {
       // Trust the server's order: the manifest already sorts attention-first.
@@ -238,18 +246,25 @@ export const useWorkbench = create<Workbench>((set, get) => ({
       refreshing = false;
     }
     const held = buffered;
-    buffered = [];
     const known = new Set(get().sessions.map((s) => s.sessionId));
     // This list is the only truth about which sessions still exist — the daemon
     // has no "session removed" event. Whatever it left out is gone, and holding
     // its transcript means a detail screen could still render a dead session.
+    // Bounded by `asked`, per above: absent-and-never-asked-about means "too
+    // new to be in this answer", not "removed".
+    const gone = (id: string): boolean => !known.has(id) && asked.has(id);
     set({
-      transcripts: onlyKnown(get().transcripts, known),
-      pendingApprovals: onlyKnown(get().pendingApprovals, known),
+      transcripts: dropWhere(get().transcripts, gone),
+      pendingApprovals: dropWhere(get().pendingApprovals, gone),
     });
-    // Anything still unknown belongs to a session this refresh did not return —
-    // dropping it is what keeps the buffer from growing without bound.
+    // Placed now, or kept for the next list to judge. Dropping the rest is what
+    // keeps the buffer bounded — and an event kept here is judged on the very
+    // next pass, because by then `asked` names its session.
+    buffered = held.filter((e) => !known.has(e.sessionId) && !gone(e.sessionId));
     for (const e of held) if (known.has(e.sessionId)) get().applyEvent(e);
+    // Nothing else is guaranteed to ask again (the session may have been started
+    // from another phone), and a kept event must not sit in the buffer forever.
+    if (buffered.length > 0) void get().refreshSessions().catch(() => {});
   },
 
   applyEvent(e) {
@@ -513,8 +528,8 @@ const bySession = (approvals: Approval[]): Record<string, Approval[]> => {
 const replaceTool = (tools: ToolStatus[], next: ToolStatus): ToolStatus[] =>
   tools.map((t) => (t.name === next.name ? next : t));
 
-const onlyKnown = <T>(map: Record<string, T | undefined>, known: Set<string>): Record<string, T | undefined> =>
-  Object.fromEntries(Object.entries(map).filter(([id]) => known.has(id)));
+const dropWhere = <T>(map: Record<string, T | undefined>, drop: (id: string) => boolean): Record<string, T | undefined> =>
+  Object.fromEntries(Object.entries(map).filter(([id]) => !drop(id)));
 
 const without = <T>(map: Record<string, T>, key: string): Record<string, T> => {
   const rest = { ...map };

@@ -71,7 +71,10 @@ describe("workbench store", () => {
     const items = state().transcripts[id]!;
     // The user's own prompt is in the transcript because the daemon echoed it —
     // the store never appends optimistically, so this is the only way it got here.
-    expect(items[0]).toMatchObject({ kind: "text", role: "user", text: "do the thing" });
+    // Presence, not position: the echo awaits the CLI's real session id, so the
+    // daemon explicitly does not promise it lands before the first assistant
+    // event (see daemon/src/sessions/registry.ts, echo()).
+    expect(items).toContainEqual(expect.objectContaining({ kind: "text", role: "user", text: "do the thing" }));
     expect(items).toContainEqual(expect.objectContaining({ kind: "text", role: "assistant", text: "all done" }));
     expect(items.at(-1)).toMatchObject({ kind: "done", ok: true, costUsd: 0.01 });
 
