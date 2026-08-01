@@ -1,0 +1,185 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>terminal</title>
+<link rel="stylesheet" href="/vendor/xterm.css">
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #0b0b0b; overflow: hidden; }
+  /* The pty is sized from this box, so it is the viewport minus the safe area
+     and nothing else — any padding here has to be paid for in the fit maths. */
+  #term { position: absolute; inset: 0; padding: 4px;
+    padding-bottom: max(4px, env(safe-area-inset-bottom)); box-sizing: border-box; }
+  #overlay { position: absolute; inset: 0; display: none; place-items: center;
+    background: rgba(0,0,0,.78); color: #eee; font: 15px/1.4 system-ui, sans-serif;
+    text-align: center; padding: 24px; -webkit-tap-highlight-color: transparent; }
+  #overlay.on { display: grid; }
+  #overlay b { display: block; font-size: 17px; margin-bottom: 6px; }
+  #overlay span { color: #999; }
+</style>
+
+<div id="term"></div>
+<div id="overlay"><div><b id="ovt">connecting…</b><span id="ovs">tap to retry</span></div></div>
+
+<script src="/vendor/xterm.js"></script>
+<script>
+(() => {
+  "use strict";
+  const FONT = 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace';
+  const FONT_SIZE = 13, LINE_HEIGHT = 1.15;
+
+  const box = document.getElementById("term");
+  const overlay = document.getElementById("overlay");
+  const ovt = document.getElementById("ovt"), ovs = document.getElementById("ovs");
+  const show = (title, sub) => { ovt.textContent = title; ovs.textContent = sub || ""; overlay.classList.add("on"); };
+  const hide = () => overlay.classList.remove("on");
+
+  const term = new Terminal({
+    fontFamily: FONT, fontSize: FONT_SIZE, lineHeight: LINE_HEIGHT,
+    cursorBlink: true, scrollback: 5000, allowProposedApi: false,
+    theme: { background: "#0b0b0b", foreground: "#eee", cursor: "#2b6", selectionBackground: "#2b62" },
+  });
+  term.open(box);
+
+  // ponytail: hand-rolled fit instead of @xterm/addon-fit — one measurement and
+  // a division, against one more vendored file to serve. Measure with the same
+  // font/size the terminal renders in, then floor so we never overflow the box.
+  const cell = (() => {
+    const probe = document.createElement("div");
+    probe.style.cssText = "position:absolute;visibility:hidden;white-space:pre;font-family:" +
+      FONT + ";font-size:" + FONT_SIZE + "px;line-height:normal";
+    probe.textContent = "W".repeat(100);
+    document.body.appendChild(probe);
+    const r = probe.getBoundingClientRect();
+    probe.remove();
+    return { w: r.width / 100, h: Math.ceil(r.height * LINE_HEIGHT) };
+  })();
+  const fit = () => {
+    const s = getComputedStyle(box);
+    const w = box.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight);
+    const h = box.clientHeight - parseFloat(s.paddingTop) - parseFloat(s.paddingBottom);
+    // A 0x0 box (page not laid out yet) would resize the pty to nothing.
+    const cols = Math.max(2, Math.floor(w / cell.w)), rows = Math.max(1, Math.floor(h / cell.h));
+    if (cols !== term.cols || rows !== term.rows) term.resize(cols, rows);
+    return { cols, rows };
+  };
+  fit();
+
+  // --- wire ----------------------------------------------------------------
+  let ws = null, seq = 0, termId = null, cfg = null;
+  const pending = new Map();
+  const call = (method, params) => new Promise((resolve, reject) => {
+    if (!ws || ws.readyState !== 1) return reject(new Error("offline"));
+    const id = String(++seq);
+    pending.set(id, { resolve, reject });
+    ws.send(JSON.stringify({ type: "req", id, method, params }));
+  });
+
+  function connect(c) {
+    cfg = c;
+    if (ws) { try { ws.close(); } catch {} ws = null; }
+    show("connecting…", c.host + ":" + c.port);
+    const sock = new WebSocket("ws://" + c.host + ":" + c.port + "/ws");
+    ws = sock;
+    sock.onopen = () => sock.send(JSON.stringify({ type: "auth", token: c.token }));
+    sock.onerror = () => {}; // onclose is the one that decides; an error alone is noise
+    sock.onclose = () => {
+      if (ws !== sock) return; // superseded by a newer connect
+      for (const p of pending.values()) p.reject(new Error("closed"));
+      pending.clear();
+      ws = null;
+      show("disconnected", "tap to reconnect");
+    };
+    sock.onmessage = async (ev) => {
+      let m; try { m = JSON.parse(ev.data); } catch { return; }
+      if (m.type === "res") {
+        const p = pending.get(m.id);
+        if (!p) return;
+        pending.delete(m.id);
+        return m.ok ? p.resolve(m.data) : p.reject(new Error(m.error));
+      }
+      if (m.type === "event") {
+        const e = m.event;
+        // Every authed client sees every terminal's output; only ours is ours.
+        if (e.kind === "term.data" && e.termId === termId) term.write(e.data);
+        else if (e.kind === "term.exit" && e.termId === termId) {
+          termId = null;
+          show("terminal exited (" + e.code + ")", "tap to start a new one");
+        }
+        return;
+      }
+      if (m.type !== "auth.ok") return;
+      try {
+        const { cols, rows } = fit();
+        if (c.termId) {
+          // Reattaching: the daemon already has the size the other client set,
+          // but this screen is what is being looked at now.
+          termId = c.termId;
+          await call("term.resize", { termId, cols, rows });
+        } else {
+          termId = (await call("term.create", { cwd: c.cwd || ".", cols, rows })).termId;
+        }
+        // Replay before the live feed can interleave: term.data for this id can
+        // only arrive after term.create returned, and this await runs first.
+        term.reset();
+        const { data } = await call("term.scrollback", { termId });
+        if (data) term.write(data);
+        hide();
+        term.focus();
+      } catch (e) {
+        show("failed", String(e && e.message || e));
+      }
+    };
+  }
+
+  term.onData((d) => { if (termId) call("term.write", { termId, data: d }).catch(() => {}); });
+  // ResizeObserver on the box, not window "resize": a page that is laid out at
+  // 0x0 (created in a background tab / a WebView not yet on screen) would
+  // otherwise size the pty to 2x1 and stay there — the window never resizes,
+  // only the box does. It covers rotation and the on-screen keyboard too.
+  // Debounced because an Android keyboard animation fires it every frame.
+  let rt = null;
+  new ResizeObserver(() => {
+    clearTimeout(rt);
+    rt = setTimeout(() => {
+      const { cols, rows } = fit();
+      if (termId) call("term.resize", { termId, cols, rows }).catch(() => {});
+    }, 120);
+  }).observe(box);
+  overlay.addEventListener("click", () => { if (cfg) connect(cfg); });
+
+  // --- host handshake ------------------------------------------------------
+  // The token arrives by message, never from the URL: a query string lands in
+  // history, logs and the Referer of anything the page loads.
+  const onHostMessage = (ev) => {
+    let c = ev.data;
+    if (typeof c === "string") { try { c = JSON.parse(c); } catch { return; } }
+    if (!c || typeof c.token !== "string" || !c.host) return; // not for us
+    connect(c);
+  };
+  // RN's injectJavaScript dispatches to `window` on iOS and `document` on
+  // Android depending on version — listen on both, ignore what isn't ours.
+  window.addEventListener("message", onHostMessage);
+  document.addEventListener("message", onHostMessage);
+
+  if (window.ReactNativeWebView) {
+    window.ReactNativeWebView.postMessage(JSON.stringify({ type: "ready" }));
+    show("waiting for the app…", "");
+  } else if (new URLSearchParams(location.search).has("dev")) {
+    // Desktop debugging only. sessionStorage, so the token survives a reload
+    // without ever being in the URL.
+    let saved = null;
+    try { saved = JSON.parse(sessionStorage.getItem("wb.terminal") || "null"); } catch {}
+    const token = saved?.token || prompt("daemon token");
+    if (token) {
+      const c = { token, host: location.hostname, port: location.port || "80", cwd: saved?.cwd || "." };
+      try { sessionStorage.setItem("wb.terminal", JSON.stringify(c)); } catch {}
+      connect(c);
+    } else {
+      show("no token", "reload with ?dev=1 to try again");
+    }
+  } else {
+    show("waiting for the app…", "");
+  }
+})();
+</script>

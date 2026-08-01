@@ -1,31 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import * as realPty from "@lydell/node-pty";
 import { PtyManager } from "../src/term.js";
-import type { IPty, PtyDeps } from "../src/term.js";
-
-// Fake pty: never spawns anything. Records the spawn argv and exposes hooks so
-// a test can push output / fire an exit as if the child had done it.
-function fakePty() {
-  const spawns: { file: string; args: string[]; opts: any }[] = [];
-  const children: any[] = [];
-  const spawn = (file: string, args: string[], opts: object): IPty => {
-    spawns.push({ file, args, opts: opts as any });
-    let dataCb: ((d: string) => void) | null = null;
-    let exitCb: ((e: { exitCode: number }) => void) | null = null;
-    const child = {
-      write: vi.fn(),
-      resize: vi.fn(),
-      kill: vi.fn(),
-      onData: (cb: (d: string) => void) => (dataCb = cb),
-      onExit: (cb: (e: { exitCode: number }) => void) => (exitCb = cb),
-      emit: (d: string) => dataCb?.(d),
-      fireExit: (exitCode = 0) => exitCb?.({ exitCode }),
-    };
-    children.push(child);
-    return child;
-  };
-  return { deps: { pty: { spawn } } satisfies PtyDeps, spawns, children };
-}
+import { fakePty } from "./fixtures.js";
 
 // Manager + fake, with the two callbacks captured as spies.
 function harness() {

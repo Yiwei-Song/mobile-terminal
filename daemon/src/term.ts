@@ -3,6 +3,11 @@
 // spawn a real shell; one test injects the real @lydell/node-pty to prove the
 // native ConPTY binding actually works.
 import { randomUUID } from "crypto";
+import type { TermInfo } from "./protocol.js";
+
+// The wire shape lives in protocol.ts (the app re-exports it); re-exported here
+// so this module's public surface still reads as a whole.
+export type { TermInfo };
 
 // Minimal structural slice of node-pty's IPty — only what this module touches.
 // Structural, not an import of IPty, so a test fake is five methods instead of
@@ -17,14 +22,6 @@ export interface IPty {
 
 export interface PtyDeps {
   pty: { spawn(file: string, args: string[], opts: object): IPty };
-}
-
-export interface TermInfo {
-  termId: string;
-  title: string;
-  cwd: string;
-  cols: number;
-  rows: number;
 }
 
 // A terminal that runs for hours must not grow unbounded. 64KB of tail is a few

@@ -4,18 +4,24 @@ import { setNtfyTopic, type Config } from "../config.js";
 import { VERSION } from "../version.js";
 import { snapshot, topProcesses, killProcess, type SystemDeps } from "../system.js";
 import { KeepAwake, lockWorkstation, displayOff, reboot, abortReboot, type PowerDeps } from "../power.js";
+import type { PtyManager } from "../term.js";
 import { ClaudeSession, type ClaudeDeps } from "./claude.js";
 import type { Manifest, ManifestEntry } from "./manifest.js";
 
 type StatusEvent = Extract<SessionEvent, { kind: "session.status" }>;
 
-// The daemon-owned singletons the system.*/power.* RPCs act on. Bundled into one
-// ctor arg (not three) so the registry's signature stays readable; injected so
-// tests drive real snapshot/lock/reboot code with fake si + spawn/exec.
+// The daemon-owned singletons the system.*/power.*/term.* RPCs act on. Bundled
+// into one ctor arg (not four) so the registry's signature stays readable;
+// injected so tests drive real snapshot/lock/reboot code with fake si +
+// spawn/exec, and the real PtyManager over a fake pty.
+// ponytail: PtyManager rides here rather than as a sixth ctor parameter — it is
+// exactly what this bag already is (a host-level singleton a handler acts on),
+// so every existing construction site keeps its shape.
 export interface MachineDeps {
   system: SystemDeps; // { si } for metrics/processes
   keepAwake: KeepAwake; // the one keep-awake hold the daemon holds while it runs
   power: PowerDeps; // { spawn, exec } for lock/displayOff/reboot
+  pty: PtyManager; // the live terminals; its onData/onExit push term.* events
 }
 
 // shutdown /r wants whole seconds; 5..120 keeps a fat-fingered 0 from rebooting
@@ -152,6 +158,29 @@ export class Registry {
       case "power.abortReboot":
         await abortReboot(this.machine.power);
         return { ok: true };
+
+      case "term.list":
+        return this.machine.pty.list();
+
+      case "term.create":
+        return this.machine.pty.create({ cwd: params.cwd, cols: params.cols, rows: params.rows });
+
+      // write/resize/kill are no-ops on an id that just exited — the manager
+      // decided that, and it is the right answer for ids that come off the wire.
+      case "term.write":
+        this.machine.pty.write(params.termId, params.data);
+        return {};
+
+      case "term.resize":
+        this.machine.pty.resize(params.termId, params.cols, params.rows);
+        return {};
+
+      case "term.kill":
+        this.machine.pty.kill(params.termId);
+        return {};
+
+      case "term.scrollback":
+        return { data: this.machine.pty.scrollback(params.termId) };
 
       default:
         throw new Error(`unknown method: ${method}`);

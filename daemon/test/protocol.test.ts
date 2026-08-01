@@ -52,6 +52,29 @@ describe("protocol", () => {
     expect(req("config.set", {})).toBeNull();
   });
 
+  it("validates term.* params, bounding cols/rows at the wire", () => {
+    const req = (method: string, params?: unknown) =>
+      parseClientMsg(JSON.stringify({ type: "req", id: "1", method, params }));
+    expect(req("term.list")).toEqual({ type: "req", id: "1", method: "term.list" });
+    expect(req("term.create", { cwd: "C:\\x", cols: 80, rows: 24 })).not.toBeNull();
+    expect(req("term.write", { termId: "t", data: "ls\r" })).not.toBeNull();
+    expect(req("term.resize", { termId: "t", cols: 1, rows: 1000 })).not.toBeNull();
+    expect(req("term.kill", { termId: "t" })).not.toBeNull();
+    expect(req("term.scrollback", { termId: "t" })).not.toBeNull();
+
+    // A pty rejects fractions and would happily allocate a screen for 1e6 cols.
+    for (const bad of [0, -1, 1001, 80.5, "80", null, undefined]) {
+      expect(req("term.create", { cwd: "C:\\x", cols: bad, rows: 24 })).toBeNull();
+      expect(req("term.create", { cwd: "C:\\x", cols: 80, rows: bad })).toBeNull();
+      expect(req("term.resize", { termId: "t", cols: bad, rows: 24 })).toBeNull();
+    }
+    expect(req("term.create", { cols: 80, rows: 24 })).toBeNull(); // no cwd
+    expect(req("term.write", { data: "x" })).toBeNull(); // no termId
+    expect(req("term.write", { termId: "t" })).toBeNull(); // no data
+    expect(req("term.kill", {})).toBeNull();
+    expect(req("term.scrollback", { termId: 7 })).toBeNull();
+  });
+
   it("rejects requests whose params do not match the method", () => {
     // Without this the returned value is typed as having params it does not have.
     expect(parseClientMsg(JSON.stringify({ type: "req", id: "1", method: "sessions.new" }))).toBeNull();

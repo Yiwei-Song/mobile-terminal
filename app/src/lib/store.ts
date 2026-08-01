@@ -208,6 +208,11 @@ export const useWorkbench = create<Workbench>((set, get) => ({
       set({ rebootPending: { delaySec: e.delaySec } });
       return;
     }
+    // term.* rides the same channel but belongs to the terminal WebView, which
+    // holds its own socket. Everything below is per-session bookkeeping, so
+    // anything without a sessionId is not ours — this also makes the store
+    // forward-compatible with kinds it has never heard of.
+    if (!("sessionId" in e)) return;
     // A session that died before the CLI reported an id: there is no row to file
     // this under and never will be.
     if (e.sessionId === "") return;

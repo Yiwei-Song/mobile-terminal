@@ -203,4 +203,33 @@ describe("server", () => {
     expect((await fetch(`http://127.0.0.1:${srv.port}/nope`)).status).toBe(404);
     await srv.close();
   });
+
+  it("serves the terminal page and the vendored xterm assets", async () => {
+    const srv = await startServer(cfgFor(), async () => null);
+    const get = (p: string) => fetch(`http://127.0.0.1:${srv.port}${p}`);
+
+    const page = await get("/terminal");
+    expect(page.status).toBe(200);
+    expect(page.headers.get("content-type")).toContain("text/html");
+    const html = await page.text();
+    expect(html).toContain("xterm");
+    // The page must never take the token off the URL — assert the vendored
+    // scripts it loads are the local ones and the token comes by message.
+    expect(html).toContain("/vendor/xterm.js");
+    expect(html).toContain("ReactNativeWebView");
+
+    const js = await get("/vendor/xterm.js");
+    expect(js.status).toBe(200);
+    expect(js.headers.get("content-type")).toContain("application/javascript");
+    expect((await js.text()).length).toBeGreaterThan(1000);
+
+    const css = await get("/vendor/xterm.css");
+    expect(css.status).toBe(200);
+    expect(css.headers.get("content-type")).toContain("text/css");
+    expect(await css.text()).toContain(".xterm");
+
+    // A query string is the ?dev=1 desktop entry, not a different route.
+    expect((await get("/terminal?dev=1")).status).toBe(200);
+    await srv.close();
+  });
 });

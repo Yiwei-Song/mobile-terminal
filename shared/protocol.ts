@@ -18,4 +18,6 @@ export type {
   Metrics,
   Proc,
   PushEvent,
+  TermEvent,
+  TermInfo,
 } from "../daemon/src/protocol";

@@ -18,7 +18,13 @@ export type ClientMsg =
   | { type: "req"; id: string; method: "power.keepAwake"; params: { on: boolean } }
   | { type: "req"; id: string; method: "power.lock" }
   | { type: "req"; id: string; method: "power.reboot"; params: { delaySec: number } }
-  | { type: "req"; id: string; method: "power.abortReboot" };
+  | { type: "req"; id: string; method: "power.abortReboot" }
+  | { type: "req"; id: string; method: "term.list" }
+  | { type: "req"; id: string; method: "term.create"; params: { cwd: string; cols: number; rows: number } }
+  | { type: "req"; id: string; method: "term.write"; params: { termId: string; data: string } }
+  | { type: "req"; id: string; method: "term.resize"; params: { termId: string; cols: number; rows: number } }
+  | { type: "req"; id: string; method: "term.kill"; params: { termId: string } }
+  | { type: "req"; id: string; method: "term.scrollback"; params: { termId: string } };
 
 // Daemon → client.
 export type ServerMsg =
@@ -82,11 +88,32 @@ export type PermissionEvent = { kind: "session.permission"; sessionId: string; r
 // asked for the reboot already knows).
 export type MachineEvent = { kind: "machine.reboot"; delaySec: number };
 
+// A row of term.list / term.create's answer. Lives here, not in term.ts, for the
+// same reason Metrics does: shared/protocol.ts re-exports this file into the
+// app's type graph, and term.ts's node imports have no business going there.
+// term.ts imports it back.
+export interface TermInfo {
+  termId: string;
+  title: string;
+  cwd: string;
+  cols: number;
+  rows: number;
+}
+
+// Terminal output and death. Not session events — a pty has no sessionId, and
+// only the WebView terminal page consumes these.
+export type TermEvent =
+  | { kind: "term.data"; termId: string; data: string }
+  | { kind: "term.exit"; termId: string; code: number };
+
 // Everything the daemon can push over the "event" channel.
-export type PushEvent = SessionEvent | MachineEvent;
+export type PushEvent = SessionEvent | MachineEvent | TermEvent;
 
 const str = (v: unknown): boolean => typeof v === "string";
 const num = (v: unknown): boolean => typeof v === "number";
+// A terminal dimension: a pty rejects fractions and a bogus 100_000 would make
+// it allocate a screen buffer nobody asked for. Bounded here, at the wire.
+const dim = (v: unknown): boolean => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 1000;
 
 // Method whitelist and params validator in one: an unlisted method has no entry,
 // and a listed one must match its shape or the ClientMsg type would be a lie.
@@ -113,6 +140,12 @@ const METHODS = new Map<string, (p: any) => boolean>([
   // can't carry NaN, so a real request only ever sends a finite delaySec here.
   ["power.reboot", (p) => num(p?.delaySec)],
   ["power.abortReboot", () => true],
+  ["term.list", () => true],
+  ["term.create", (p) => str(p?.cwd) && dim(p?.cols) && dim(p?.rows)],
+  ["term.write", (p) => str(p?.termId) && str(p?.data)],
+  ["term.resize", (p) => str(p?.termId) && dim(p?.cols) && dim(p?.rows)],
+  ["term.kill", (p) => str(p?.termId)],
+  ["term.scrollback", (p) => str(p?.termId)],
 ]);
 
 export function parseClientMsg(raw: string): ClientMsg | null {

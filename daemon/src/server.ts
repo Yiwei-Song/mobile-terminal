@@ -20,7 +20,20 @@ export interface ServerOpts {
 export function startServer(cfg: Config, handler: RequestHandler, opts: ServerOpts = {}) {
   const pingMs = opts.pingMs ?? 30_000;
   const pongMs = opts.pongMs ?? 10_000;
-  const debugHtml = join(dirname(fileURLToPath(import.meta.url)), "..", "debug", "index.html");
+  // dist is flat (rootDir src), so ".." is daemon/ from both src/ (tsx) and
+  // dist/ (built). Everything served is therefore an uncompiled sibling of
+  // src/: debug/, web/, and node_modules/ — no copy step, one resolution.
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const xterm = join(root, "node_modules", "@xterm", "xterm");
+  const HTML = "text/html; charset=utf-8";
+  // The whole static surface. A fixed table, not a path join off req.url —
+  // that is also why there is no traversal check to get wrong.
+  const routes = new Map<string, [file: string, type: string]>([
+    ["/", [join(root, "debug", "index.html"), HTML]],
+    ["/terminal", [join(root, "web", "terminal.html"), HTML]],
+    ["/vendor/xterm.js", [join(xterm, "lib", "xterm.js"), "application/javascript; charset=utf-8"]],
+    ["/vendor/xterm.css", [join(xterm, "css", "xterm.css"), "text/css; charset=utf-8"]],
+  ]);
   const expected = Buffer.from(cfg.token);
   // Length check first: timingSafeEqual throws on a length mismatch, and the
   // comparison itself must not leak the token one byte at a time via ===.
@@ -37,13 +50,15 @@ export function startServer(cfg: Config, handler: RequestHandler, opts: ServerOp
   const send = (ws: WebSocket, msg: ServerMsg) => ws.send(JSON.stringify(msg));
 
   const http = createServer((req, res) => {
-    let html: Buffer | null = null;
-    // Read per request so Task 8 can edit the page without a daemon restart; a
+    // Query stripped: /terminal?dev=1 is the desktop-debug entry to the same page.
+    const route = routes.get(req.url?.split("?")[0] ?? "");
+    let body: Buffer | null = null;
+    // Read per request so the pages can be edited without a daemon restart; a
     // missing file is a 404, not an uncaught throw that takes the daemon down.
-    if (req.url === "/") try { html = readFileSync(debugHtml); } catch { /* 404 below */ }
-    if (!html) { res.statusCode = 404; res.end(); return; }
-    res.setHeader("content-type", "text/html; charset=utf-8");
-    res.end(html);
+    if (route) try { body = readFileSync(route[0]); } catch { /* 404 below */ }
+    if (!route || !body) { res.statusCode = 404; res.end(); return; }
+    res.setHeader("content-type", route[1]);
+    res.end(body);
   });
   const wss = new WebSocketServer({ server: http, path: "/ws" });
   // ws mirrors the http server's "error" onto itself, and an unlistened "error"

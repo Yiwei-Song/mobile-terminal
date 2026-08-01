@@ -8,6 +8,8 @@ import { startServer } from "./server.js";
 import { notify, ntfyFor } from "./notify.js";
 import { runBootResume, bootSideEffects } from "./boot.js";
 import { KeepAwake, lockWorkstation } from "./power.js";
+import * as pty from "@lydell/node-pty";
+import { PtyManager } from "./term.js";
 import type { PushEvent } from "./protocol.js";
 import { Manifest } from "./sessions/manifest.js";
 import { Registry } from "./sessions/registry.js";
@@ -26,12 +28,23 @@ keepAwake.start();
 // Belt-and-suspenders: kill the keep-awake child if the daemon exits. The child
 // also self-exits on stdin EOF (its pipe closes when we die), but this covers
 // the clean-exit path synchronously so the machine can sleep again promptly.
-process.on("exit", () => keepAwake.stop());
+process.on("exit", () => {
+  keepAwake.stop();
+  // Orphaned ptys keep running (and holding their cwd) after the daemon dies.
+  terms.killAll();
+});
 
 // ponytail: single-push-ref; event bus if the daemon grows. The registry is
 // built before the server (it *is* the server's handler), so its push starts as
 // a no-op and is filled in by the first request.
 let pushRef: (e: PushEvent) => void = () => {};
+// The live terminals. Their output goes straight onto the event channel — the
+// terminal WebView is just another authed client, so no ntfy, no manifest.
+const terms = new PtyManager(
+  { pty },
+  (termId, data) => pushRef({ kind: "term.data", termId, data }),
+  (termId, code) => pushRef({ kind: "term.exit", termId, code }),
+);
 // A raw uuid on a lock screen says nothing about which session it is; the
 // manifest already holds the title the list shows, so read it back from there.
 const titleOf = (sessionId: string) =>
@@ -46,7 +59,7 @@ const registry = new Registry(
     if (n) notify(cfg.ntfyTopic, n.title, n.body);
   },
   cfg,
-  { system: { si }, keepAwake, power: powerDeps },
+  { system: { si }, keepAwake, power: powerDeps, pty: terms },
 );
 
 // After the manifest is normalized and before any client can read it: clear
@@ -86,6 +99,8 @@ const ip = candidates[0]?.address ?? "127.0.0.1";
 
 console.log(`LAN candidates (best first): ${candidates.map((c) => `${c.name}=${c.address}`).join("  ") || "(none)"}`);
 
-console.log(`Workbench daemon on ws://${ip}:${srv.port}/ws  (debug page: http://${ip}:${srv.port}/)`);
+console.log(
+  `Workbench daemon on ws://${ip}:${srv.port}/ws  (debug page: http://${ip}:${srv.port}/, terminal: http://${ip}:${srv.port}/terminal)`,
+);
 console.log("Scan to pair:");
 qrcode.generate(JSON.stringify({ host: ip, port: srv.port, token: cfg.token }), { small: true });

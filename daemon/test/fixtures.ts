@@ -1,6 +1,8 @@
+import { vi } from "vitest";
 import type { SDKAssistantMessage, SDKResultMessage, SDKSystemMessage } from "@anthropic-ai/claude-agent-sdk";
 import { KeepAwake, type PowerDeps } from "../src/power.js";
 import type { SystemDeps } from "../src/system.js";
+import { PtyManager, type IPty, type PtyDeps } from "../src/term.js";
 import type { MachineDeps } from "../src/sessions/registry.js";
 
 const GB = 1024 ** 3;
@@ -31,15 +33,45 @@ const exitingSpawn = (): PowerDeps["spawn"] =>
     return { pid: 2, kill() {}, on(ev: string, cb: (a: unknown) => void) { handlers[ev] = cb; return this; } };
   }) as unknown as PowerDeps["spawn"];
 
+// Fake pty: never spawns anything. Records the spawn argv and exposes hooks so
+// a test can push output / fire an exit as if the child had done it.
+export function fakePty() {
+  const spawns: { file: string; args: string[]; opts: any }[] = [];
+  const children: any[] = [];
+  const spawn = (file: string, args: string[], opts: object): IPty => {
+    spawns.push({ file, args, opts: opts as any });
+    let dataCb: ((d: string) => void) | null = null;
+    let exitCb: ((e: { exitCode: number }) => void) | null = null;
+    const child = {
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      onData: (cb: (d: string) => void) => (dataCb = cb),
+      onExit: (cb: (e: { exitCode: number }) => void) => (exitCb = cb),
+      emit: (d: string) => dataCb?.(d),
+      fireExit: (exitCode = 0) => exitCb?.({ exitCode }),
+    };
+    children.push(child);
+    return child;
+  };
+  return { deps: { pty: { spawn } } satisfies PtyDeps, spawns, children };
+}
+
 // A full MachineDeps backed by fakes: real KeepAwake (hold state observable via
-// .active), real snapshot/lock/reboot code over fake si + a recording exec.
+// .active), real snapshot/lock/reboot code over fake si + a recording exec, and
+// a real PtyManager over a fake pty (`children` drives its output/exit).
 export function fakeMachine(procs: Parameters<typeof fakeSi>[0] = []) {
   const execCmds: string[] = [];
   const exec = ((cmd: string, cb: (e: unknown) => void) => { execCmds.push(cmd); cb(null); return {}; }) as unknown as PowerDeps["exec"];
   const power: PowerDeps = { spawn: exitingSpawn(), exec };
   const keepAwake = new KeepAwake({ spawn: heldSpawn(), exec });
-  const machine: MachineDeps = { system: { si: fakeSi(procs) }, keepAwake, power };
-  return { machine, keepAwake, execCmds };
+  const ptyFake = fakePty();
+  // The push the registry was built with is what these forward to; index.ts
+  // wires the same two callbacks to term.data / term.exit events.
+  const onTerm = { data: (_id: string, _d: string) => {}, exit: (_id: string, _c: number) => {} };
+  const pty = new PtyManager(ptyFake.deps, (id, d) => onTerm.data(id, d), (id, c) => onTerm.exit(id, c));
+  const machine: MachineDeps = { system: { si: fakeSi(procs) }, keepAwake, power, pty };
+  return { machine, keepAwake, execCmds, pty, ptyFake, onTerm };
 }
 
 // Shared fake SDK messages. `satisfies`-checked against the real SDK types, so a
