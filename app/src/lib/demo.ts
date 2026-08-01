@@ -1,4 +1,4 @@
-import type { SessionRow } from "@shared/protocol";
+import type { Metrics, Proc, SessionRow } from "@shared/protocol";
 
 import { useWorkbench, type Approval, type TranscriptItem } from "./store";
 
@@ -26,6 +26,34 @@ const row = (
   minutes: number,
 ): SessionRow => ({ sessionId, agent: "claude", cwd, title, status, updatedAt: ago(minutes) });
 
+// The System screen's live snapshot: realistic mid-load box (cpu ~34%, 22/32 GB
+// RAM, 780/1000 GB disk, up 3d 4h). Constant so the offline story can grey the
+// same last-known numbers the online one shows.
+const metrics: Metrics = {
+  cpuPct: 34,
+  mem: { usedGb: 22, totalGb: 32, pct: 69 },
+  disks: [{ mount: "C:", usedGb: 780, totalGb: 1000, pct: 78 }],
+  uptimeSec: 3 * 86_400 + 4 * 3_600, // 3d 4h
+};
+
+// Sorted by cpu desc, the order the daemon returns. node #8891 is the daemon.
+const processes: Proc[] = [
+  { pid: 12184, name: "Code.exe", cpuPct: 18.4, memMb: 1240 },
+  { pid: 9032, name: "chrome.exe", cpuPct: 12.1, memMb: 2360 },
+  { pid: 21044, name: "node.exe", cpuPct: 7.8, memMb: 540 },
+  { pid: 8891, name: "node.exe", cpuPct: 4.2, memMb: 410 },
+  { pid: 15522, name: "Discord.exe", cpuPct: 2.1, memMb: 320 },
+  { pid: 4820, name: "explorer.exe", cpuPct: 0.9, memMb: 180 },
+  { pid: 18344, name: "Spotify.exe", cpuPct: 0.6, memMb: 240 },
+  { pid: 20120, name: "powershell.exe", cpuPct: 0.3, memMb: 90 },
+];
+
+// A rolling CPU series so the sparkline shows a curve rather than a flat line the
+// (socket-less) demo can never grow. Ends near metrics.cpuPct for continuity.
+export const DEMO_CPU_HISTORY = [28, 31, 45, 52, 38, 30, 27, 33, 41, 58, 49, 36, 29, 34, 44, 39, 32, 30, 34];
+
+const powerState = { keepAwake: true, ecoMode: false };
+
 // Home seeds on every focus, and a second seed would throw away whatever the
 // demo was showing (an answered approval, a scrolled transcript).
 let seeded = false;
@@ -44,7 +72,17 @@ export function seedDemo(): void {
     return;
   }
   if (variant === "offline") {
-    useWorkbench.setState({ connState: "offline", machine, sessions: [], lastSeen: Date.now() - 14 * 60_000 });
+    // Last-known metrics/power survive the drop so the System screen can grey
+    // them out under an offline note — you manage a PC you can still see.
+    useWorkbench.setState({
+      connState: "offline",
+      machine,
+      sessions: [],
+      metrics,
+      processes,
+      powerState,
+      lastSeen: Date.now() - 14 * 60_000,
+    });
     return;
   }
   if (variant === "empty") {
@@ -52,7 +90,9 @@ export function seedDemo(): void {
     return;
   }
   // A typo in the flag would otherwise look exactly like the default story.
-  if (variant !== undefined) console.warn(`demo: unknown EXPO_PUBLIC_DEMO_STATE "${variant}" — showing the populated list`);
+  // "reboot" is a known variant of the populated story (arms the countdown below).
+  if (variant !== undefined && variant !== "reboot")
+    console.warn(`demo: unknown EXPO_PUBLIC_DEMO_STATE "${variant}" — showing the populated list`);
 
   // Story literals live in here: nothing to allocate in a build with the flag off.
   // Attention-first, the order the daemon's manifest would return.
@@ -119,6 +159,12 @@ export function seedDemo(): void {
     sessions,
     transcripts,
     pendingApprovals: { "s-auth": [approval] },
+    metrics,
+    processes,
+    powerState,
+    // EXPO_PUBLIC_DEMO_STATE=reboot arms the countdown shot: the machine.reboot
+    // push already landed, so the System screen shows the Abort countdown.
+    rebootPending: variant === "reboot" ? { delaySec: 15 } : null,
     lastSeen: Date.now(),
     lastError: null,
   });

@@ -31,7 +31,14 @@ export function MachineBar() {
 
   return (
     <View style={styles.bar}>
-      <View style={styles.identity}>
+      {/* The strip is the door to the System screen: tap the hostname/health to
+          reach live metrics, processes and power controls. */}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="System and power controls"
+        onPress={() => router.push("/system")}
+        style={({ pressed }) => [styles.identity, pressed && { opacity: opacity.pressed }]}
+      >
         <Text variant="h2" numberOfLines={1}>
           {machine?.hostname ?? "Your PC"}
         </Text>
@@ -42,7 +49,7 @@ export function MachineBar() {
             {seen}
           </Text>
         </View>
-      </View>
+      </Pressable>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Settings"

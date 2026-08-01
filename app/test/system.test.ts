@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 
 import { sparklinePoints, meterColor } from "../src/components/meters";
+import { uptime } from "../src/lib/format";
 import { useWorkbench } from "../src/lib/store";
 import { startDaemon, until, idle } from "./harness";
 
@@ -37,6 +38,24 @@ describe("meterColor", () => {
   it("is red at 90 and above", () => {
     expect(meterColor(90)).toBe("danger");
     expect(meterColor(100)).toBe("danger");
+  });
+});
+
+describe("uptime", () => {
+  it("shows minutes only under an hour", () => {
+    expect(uptime(8 * 60)).toBe("8m");
+    expect(uptime(0)).toBe("0m");
+    expect(uptime(59)).toBe("0m"); // sub-minute floors, never negative-looking
+  });
+  it("shows hours and minutes under a day", () => {
+    expect(uptime(5 * 3600 + 12 * 60)).toBe("5h 12m");
+    expect(uptime(3600)).toBe("1h 0m");
+  });
+  it("shows days and hours past a day", () => {
+    expect(uptime(3 * 86400 + 4 * 3600)).toBe("3d 4h");
+  });
+  it("floors a future timestamp at 0m instead of going negative", () => {
+    expect(uptime(-5)).toBe("0m");
   });
 });
 
