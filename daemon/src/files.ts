@@ -1,9 +1,14 @@
 // Read-only file browsing + git status/diff for the phone, behind a path guard.
 //
-// The guard is the whole point of this module: every path that arrives here came
-// off the wire, so `list`/`read`/`git.*` refuse anything that does not resolve
-// inside an allowed root. Roots are config.fileRoots plus the cwds of known
-// sessions — nothing else on the disk is reachable.
+// The guard scopes this module: every path that arrives here came off the wire,
+// so `list`/`read`/`git.*` refuse anything that does not resolve inside an
+// allowed root. Roots are config.fileRoots plus the cwds of known sessions.
+//
+// This is UI scoping, NOT a containment boundary. `sessions.new {cwd}` takes any
+// string from the authenticated client, and session cwds become roots — so a
+// client can make `C:\` a root. That is not a privilege escalation (the same
+// client can `term.create` a shell anywhere), but do not mistake this guard for
+// a sandbox: it keeps the browser honest, it does not confine a hostile client.
 import { execFile } from "node:child_process";
 import { closeSync, openSync, readdirSync, readSync, realpathSync, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
@@ -33,13 +38,19 @@ const CI = process.platform === "win32"; // case-insensitive filesystem
 // win32. realpath (not resolve alone) because a junction *inside* a root can
 // point anywhere on the disk — `<root>\escape\secrets` is lexically inside and
 // physically outside, and only realpath can tell. A path that isn't on disk yet
-// has no realpath, so it falls back to resolve; the fs call that follows will
+// has no realpath, so ENOENT falls back to resolve; the fs call that follows will
 // fail with ENOENT anyway, so nothing is reachable through that gap.
+//
+// Any OTHER realpath error (EACCES/EPERM/EBUSY/EINVAL/ELOOP...) means we could
+// not learn where this path really points, so it fails CLOSED: a unique sentinel
+// that is equal to no root and a prefix of nothing.
+let refused = 0;
 function canon(p: string): string {
   let r = resolve(p);
   try {
     r = realpathSync.native(r);
-  } catch {
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") return `\0refused-${++refused}`;
     /* not on disk — resolve-only is the answer */
   }
   return CI ? r.toLowerCase() : r;
@@ -48,8 +59,11 @@ function canon(p: string): string {
 export function isUnderRoot(p: string, roots: string[]): boolean {
   if (!p.trim() || roots.length === 0) return false;
   const c = canon(p);
-  // `\\server\share` (a remote tree the daemon has no business serving) and
-  // `\\?\C:\...` (which bypasses normalization entirely) are both out.
+  // `\\server\share` — a remote tree the daemon has no business serving — is out.
+  // Note this is checked on the CANONICAL form: realpath strips a `\\?\` prefix
+  // off a path that exists, so `\\?\<root>\a.txt` canonicalizes to `<root>\a.txt`
+  // and is admitted. That is correct (it is the same file), not a bypass; only a
+  // `\\?\` path with no realpath keeps its prefix and lands here.
   if (c.startsWith("\\\\")) return false;
   return roots.some((r) => {
     if (!r.trim()) return false;
@@ -132,7 +146,10 @@ export async function gitStatus(
   exec: Exec,
 ): Promise<{ branch: string; files: { path: string; status: string }[] }> {
   const dir = ensure(cwd, roots);
-  return parseStatus(await exec("git", ["status", "--porcelain=v1", "-b"], dir));
+  // `-- .` is load-bearing: git status is a WHOLE-REPO command regardless of cwd,
+  // so without a pathspec a root of `<repo>\sub` still reports (and `git diff`
+  // still prints the content of) files above the root that `read` would refuse.
+  return parseStatus(await exec("git", ["status", "--porcelain=v1", "-b", "--", "."], dir));
 }
 
 // `## main...origin/main [ahead 1]` -> `main`; `## HEAD (no branch)` -> `HEAD`.
@@ -164,13 +181,14 @@ const unquote = (p: string): string => (p.startsWith('"') && p.endsWith('"') ? p
 
 export async function gitDiff(cwd: string, roots: string[], exec: Exec, file?: string): Promise<string> {
   const dir = ensure(cwd, roots);
-  const args = ["diff", "--no-color"];
-  if (file) {
-    // Guarded like any other path: `--` already stops git reading the name as an
-    // option and the argv array keeps it out of a shell, but a pathspec that
-    // resolves outside the roots has no business being diffed either.
-    ensure(resolve(dir, file), roots);
-    args.push("--", file);
-  }
-  return exec("git", args, dir);
+  // Always a pathspec — see gitStatus: bare `git diff` ignores cwd and dumps the
+  // whole repo, including files above the root.
+  //
+  // And the pathspec is the RESOLVED absolute path, never the raw wire string:
+  // git pathspecs carry magic (`:/`, `:(top)`, `:!x`, `:(glob)`) that re-widens
+  // the diff past the root, and those forms resolve to harmless-looking
+  // nonexistent paths *inside* the root, so the guard alone waves them through.
+  // An absolute path cannot carry magic, so passing it neutralizes all of them.
+  const f = file ? ensure(resolve(dir, file), roots) : ".";
+  return exec("git", ["diff", "--no-color", "--", f], dir);
 }

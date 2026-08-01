@@ -15,6 +15,10 @@ export async function listeningPorts(exec: Exec): Promise<Port[]> {
   for (const line of (await exec("netstat", ["-ano"])).split(/\r?\n/)) {
     // Proto / Local / Foreign / State / PID — LISTENING is TCP-only, so UDP rows
     // (which have no state column) never match.
+    // Known limitation: netstat localizes the state column (ABHÖREN on German
+    // Windows, ÉCOUTE on French, ...), so on a non-English box this matches
+    // nothing and the ports screen comes back empty rather than wrong. Fixing it
+    // properly means dropping netstat for Get-NetTCPConnection; not worth it yet.
     const m = /^\s*TCP\s+(\S+)\s+\S+\s+LISTENING\s+(\d+)\s*$/i.exec(line);
     if (!m) continue;
     const at = m[1]!.lastIndexOf(":");

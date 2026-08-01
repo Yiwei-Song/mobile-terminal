@@ -67,6 +67,30 @@ describe("isUnderRoot refuses", () => {
     expect(isUnderRoot("\\\\server\\share\\x.txt", ["\\\\server\\share"])).toBe(false);
   });
 
+  it("...but an in-root `\\\\?\\` path is ADMITTED, because realpath strips the prefix", () => {
+    const t = tree();
+    if (!win) return;
+    // Pinning the real semantics: `\\?\` is not "refused outright". The file
+    // exists, so realpath canonicalizes it to the plain in-root path and it is
+    // the same file `read` would serve anyway. The refusal above fires because
+    // win.ini is outside the root, not because of the prefix.
+    expect(isUnderRoot("\\\\?\\" + join(t.root, "a.txt"), [t.root])).toBe(true);
+    // And the prefix buys no escape: still outside is still outside.
+    expect(isUnderRoot("\\\\?\\" + join(t.evil, "secrets.txt"), [t.root])).toBe(false);
+  });
+
+  it("fails CLOSED when realpath errors with anything other than ENOENT", () => {
+    if (!win) return;
+    // realpath on the SAM hive is EPERM, not ENOENT. The old `catch {}` swallowed
+    // that and fell back to a lexical check, which says "inside the root" — so an
+    // unreadable path was admitted on a guess. Now: no realpath, no admission.
+    const root = "C:\\Windows\\System32\\config";
+    expect(isUnderRoot(join(root, "SAM"), [root])).toBe(false);
+    // A sibling that DOES canonicalize under the same root still passes, so this
+    // is fail-closed, not "refuse everything under C:\Windows".
+    expect(isUnderRoot("C:\\Windows\\System32", ["C:\\Windows"])).toBe(true);
+  });
+
   it("everything when the roots list is empty", () => {
     const t = tree();
     expect(isUnderRoot(t.root, [])).toBe(false);
@@ -224,7 +248,11 @@ describe("gitStatus", () => {
     const t = tree();
     const f = fakeExec(cannedStatus);
     const s = await gitStatus(t.root, [t.root], f.exec);
-    expect(f.calls[0]).toEqual({ file: "git", args: ["status", "--porcelain=v1", "-b"], cwd: resolve(t.root) });
+    expect(f.calls[0]).toEqual({
+      file: "git",
+      args: ["status", "--porcelain=v1", "-b", "--", "."],
+      cwd: resolve(t.root),
+    });
     expect(s.branch).toBe("main");
     expect(s.files).toEqual([
       { path: "daemon/src/files.ts", status: " M" },
@@ -243,11 +271,13 @@ describe("gitStatus", () => {
 });
 
 describe("gitDiff", () => {
-  it("runs git diff --no-color and returns the text", async () => {
+  it("scopes a fileless diff to the cwd", async () => {
     const t = tree();
     const f = fakeExec("diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b\n");
     const d = await gitDiff(t.root, [t.root], f.exec);
-    expect(f.calls[0].args).toEqual(["diff", "--no-color"]);
+    // `-- .` and not bare `diff`: without it git diffs the whole repo, root or no
+    // root. See the real-git leak test below.
+    expect(f.calls[0].args).toEqual(["diff", "--no-color", "--", "."]);
     expect(d).toContain("@@ -1 +1 @@");
   });
 
@@ -258,7 +288,33 @@ describe("gitDiff", () => {
     await gitDiff(t.root, [t.root], f.exec, "we ird;&.txt");
     // `--` ends option parsing, and the name is its own argv slot: no quoting,
     // no shell, so `;` and `&` are literal characters in a filename.
-    expect(f.calls[0].args).toEqual(["diff", "--no-color", "--", "we ird;&.txt"]);
+    expect(f.calls[0].args).toEqual(["diff", "--no-color", "--", join(resolve(t.root), "we ird;&.txt")]);
+  });
+
+  it("neutralizes git pathspec magic — the raw wire string never reaches git", async () => {
+    const t = tree();
+    // Each of these means something to git: `:/` and `:(top)` re-anchor at the
+    // repo top (defeating the `-- .` scoping above), `:!` negates, `:(glob)`
+    // globs. All of them resolve to nonexistent paths lexically *inside* the
+    // root, so the path guard alone says "fine".
+    for (const magic of [":/", ":/x", ":(top)", ":(top)../secret.txt", ":!x", ":(glob)**/*"]) {
+      const f = fakeExec("");
+      let args: string[] | null = null;
+      try {
+        await gitDiff(t.root, [t.root], f.exec, magic);
+        args = f.calls[0].args;
+      } catch (e) {
+        expect(String(e)).toMatch(/outside allowed roots/); // refused is also fine
+        continue;
+      }
+      // Not refused? Then git must have been handed the resolved ABSOLUTE path —
+      // which cannot carry magic — and never the raw string.
+      const spec = args![3]!;
+      expect(args!.slice(0, 3)).toEqual(["diff", "--no-color", "--"]);
+      expect(spec).toBe(resolve(t.root, magic));
+      expect(spec).not.toBe(magic);
+      expect(isUnderRoot(spec, [t.root])).toBe(true);
+    }
   });
 });
 
@@ -268,5 +324,40 @@ describe("real git, read-only, against this repo", () => {
     const s = await gitStatus(repo, [repo], execFileText);
     expect(s.branch).not.toBe("");
     expect(Array.isArray(s.files)).toBe(true);
+  });
+});
+
+// The regression test for the leak the scoping fixes exist for: a REAL repo whose
+// root is a subdirectory. `git status`/`git diff` are whole-repo commands, so
+// before the `-- .` pathspec they happily reported and printed the content of
+// `<repo>\top.txt` — a file `read` refuses. Realistic trigger: a session cwd of
+// `D:\Mobile-access\daemon` inside the repo `D:\Mobile-access`.
+describe("real git does not leak above the root", () => {
+  it("status and diff stay inside a sub-directory root", async () => {
+    const base = mkdtempSync(join(tmpdir(), "wb-leak-"));
+    const sub = join(base, "sub");
+    mkdirSync(sub);
+    writeFileSync(join(base, "top.txt"), "TOPSECRET-ORIGINAL\n");
+    writeFileSync(join(sub, "b.txt"), "b\n");
+    const git = (...a: string[]) => execFileText("git", a, base);
+    await git("init", "-q", ".");
+    await git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "init", "--allow-empty");
+    await git("add", "-A");
+    await git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "files");
+    writeFileSync(join(base, "top.txt"), "TOPSECRET-MODIFIED\n");
+    writeFileSync(join(sub, "b.txt"), "MODIFIED-SUB\n");
+
+    const s = await gitStatus(sub, [sub], execFileText);
+    expect(s.files.map((f) => f.path)).toEqual(["sub/b.txt"]); // NOT top.txt
+
+    const d = await gitDiff(sub, [sub], execFileText);
+    expect(d).toContain("MODIFIED-SUB");
+    expect(d).not.toContain("TOPSECRET"); // the actual leak: file content
+
+    // ...and pathspec magic cannot re-widen it past the root either.
+    for (const magic of [":/", ":(top)", ":(top)/top.txt"]) {
+      const out = await gitDiff(sub, [sub], execFileText, magic).catch((e) => String(e));
+      expect(out).not.toContain("TOPSECRET");
+    }
   });
 });

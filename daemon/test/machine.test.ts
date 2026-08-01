@@ -176,7 +176,12 @@ describe("files/git/ports RPCs", () => {
     expect((await h.call("2", "git.diff", { cwd: join(b, "root"), file: "a.txt" })).data).toEqual({
       diff: "diff --git a/a.txt b/a.txt\n",
     });
-    expect(h.fm.execFileCalls.at(-1)).toMatchObject({ file: "git", args: ["diff", "--no-color", "--", "a.txt"] });
+    // The pathspec is the RESOLVED absolute path, not the wire string: an
+    // absolute pathspec cannot carry git's `:/` / `:(top)` magic.
+    expect(h.fm.execFileCalls.at(-1)).toMatchObject({
+      file: "git",
+      args: ["diff", "--no-color", "--", join(b, "root", "a.txt")],
+    });
     // A cwd outside the roots never reaches exec.
     const before = h.fm.execFileCalls.length;
     expect(await h.call("3", "git.status", { cwd: join(b, "outside") })).toMatchObject({ ok: false });
