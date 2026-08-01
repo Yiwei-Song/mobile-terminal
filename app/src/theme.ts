@@ -51,4 +51,5 @@ export const tracking = { label: 1 } as const;
  * Diff line backgrounds: accent/danger at low alpha, so a whole line reads as
  * added or removed without pushing the mono text off the contrast floor.
  */
-export const tint = { add: "#22C55E24", del: "#EF444424" } as const;
+// `24` is ~14% alpha — derived from the accent/danger tokens so they can't drift.
+export const tint = { add: `${color.accent}24`, del: `${color.danger}24` } as const;

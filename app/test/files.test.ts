@@ -1,6 +1,16 @@
 import { describe, it, expect } from "vitest";
 
-import { counts, fileLabel, parseDiff } from "../src/lib/diff";
+import {
+  counts,
+  fileLabel,
+  lineCount,
+  parseDiff,
+  planRows,
+  tooLargeToRender,
+  RENDER_LINE_LIMIT,
+  type DiffFile,
+  type DiffLine,
+} from "../src/lib/diff";
 import { bytes, crumbs } from "../src/lib/format";
 import { parseMarkdown } from "../src/lib/markdown";
 
@@ -159,6 +169,76 @@ describe("parseDiff", () => {
   });
 });
 
+describe("planRows", () => {
+  // The fold's index arithmetic broke once and rendered the wrong run, so the
+  // shape of the plan — not just its length — is what's pinned here.
+  const run = (n: number, type: DiffLine["type"] = "ctx"): DiffLine[] =>
+    Array.from({ length: n }, (_, i) => ({ type, text: `${type}${i}` }));
+
+  it("folds a run longer than six into one row that names the whole run", () => {
+    const rows = planRows(run(10), []);
+    expect(rows).toEqual([{ kind: "fold", at: 0, n: 10 }]);
+  });
+
+  it("opens that same run into every one of its lines", () => {
+    const lines = run(10);
+    const rows = planRows(lines, [0]);
+    expect(rows).toHaveLength(10);
+    expect(rows.map((r) => (r.kind === "line" ? r.at : "fold"))).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(rows.every((r) => r.kind === "line")).toBe(true);
+  });
+
+  it("leaves a six-line run alone — the threshold is strictly more than six", () => {
+    expect(planRows(run(6), []).every((r) => r.kind === "line")).toBe(true);
+    expect(planRows(run(7), [])).toEqual([{ kind: "fold", at: 0, n: 7 }]);
+  });
+
+  it("never folds adds or deletes, however many in a row", () => {
+    const lines = [...run(20, "add"), ...run(20, "del")];
+    expect(planRows(lines, []).every((r) => r.kind === "line")).toBe(true);
+  });
+
+  it("keeps order, and folds at the index the run starts at", () => {
+    // 2 ctx, 1 add, 8 ctx, 1 del, 2 ctx — only the middle run is long enough.
+    const lines = [...run(2), ...run(1, "add"), ...run(8), ...run(1, "del"), ...run(2)];
+    expect(planRows(lines, [])).toEqual([
+      { kind: "line", at: 0, line: lines[0] },
+      { kind: "line", at: 1, line: lines[1] },
+      { kind: "line", at: 2, line: lines[2] },
+      { kind: "fold", at: 3, n: 8 },
+      { kind: "line", at: 11, line: lines[11] },
+      { kind: "line", at: 12, line: lines[12] },
+      { kind: "line", at: 13, line: lines[13] },
+    ]);
+    // Opening the run at 3 restores lines 3..10 in place, nothing else moves.
+    const open = planRows(lines, [3]);
+    expect(open).toHaveLength(14);
+    expect(open.map((r) => (r.kind === "line" ? r.line.text : "fold"))).toEqual(lines.map((l) => l.text));
+  });
+});
+
+describe("tooLargeToRender", () => {
+  const file = (n: number): DiffFile => ({
+    oldPath: "x",
+    newPath: "x",
+    binary: false,
+    hunks: [{ header: "@@", lines: Array.from({ length: n }, () => ({ type: "add" as const, text: "x" })) }],
+  });
+
+  it("adds up lines across files and hunks", () => {
+    expect(lineCount([file(3), file(4)])).toBe(7);
+    expect(lineCount([])).toBe(0);
+  });
+
+  it("renders in full right up to the limit and summarises past it", () => {
+    expect(tooLargeToRender([file(RENDER_LINE_LIMIT)])).toBe(false);
+    expect(tooLargeToRender([file(RENDER_LINE_LIMIT + 1)])).toBe(true);
+    // A regenerated lockfile arrives as one enormous file, not many small ones.
+    expect(tooLargeToRender([file(20_000)])).toBe(true);
+    expect(tooLargeToRender(parseDiff(MODIFY))).toBe(false);
+  });
+});
+
 describe("parseMarkdown", () => {
   it("reads headings at their level", () => {
     expect(parseMarkdown("# One\n### Three")).toEqual([
@@ -238,6 +318,15 @@ describe("crumbs", () => {
   });
   it("never claims a hierarchy for a dir outside the root", () => {
     expect(crumbs("D:\\work", "C:\\other")).toEqual([{ label: "C:\\other", path: "C:\\other" }]);
+  });
+  it("matches whole segments only — D:\\work is not the root of D:\\workspace", () => {
+    expect(crumbs("D:\\work", "D:\\workspace\\x")).toEqual([{ label: "D:\\workspace\\x", path: "D:\\workspace\\x" }]);
+  });
+  it("handles a root written with a trailing separator", () => {
+    expect(crumbs("D:\\", "D:\\work")).toEqual([
+      { label: "D:\\", path: "D:\\" },
+      { label: "work", path: "D:\\work" },
+    ]);
   });
   it("uses the separator the root is written with", () => {
     expect(crumbs("/home/y/code", "/home/y/code/app/src")).toEqual([

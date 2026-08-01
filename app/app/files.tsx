@@ -309,6 +309,11 @@ function Row({ entry, onPress }: { entry: Entry; onPress: () => void }) {
 
 const isMarkdown = (p: string): boolean => /\.mdx?$/i.test(p);
 
+// What the daemon's files.read returns instead of bytes it can't show as text.
+// It comes back flagged truncated, which without this would read as "the rest
+// of this file is not here" — there is no rest.
+const BINARY = "(binary file)";
+
 /**
  * The file viewer. Code is two text columns — numbers and source — inside one
  * sideways scroll: nothing wraps, nothing clips, and one <Text> per column
@@ -334,7 +339,9 @@ function FileViewer({
       {truncated && (
         <Card accentEdge="warn" style={styles.note}>
           <Text variant="sub" color="textMut">
-            Showing the first 256 KB — the rest of this file is not here.
+            {text === BINARY
+              ? "This file isn't text — there is nothing to show line by line."
+              : "Showing the first 256 KB — the rest of this file is not here."}
           </Text>
         </Card>
       )}
@@ -356,7 +363,9 @@ function FileViewer({
   );
 }
 
-const HEADING = [typeScale.title, typeScale.h2, typeScale.body] as const;
+// h1, h2, h3. h4-h6 clamp to the h3 style: a fourth size on a 390pt column
+// reads as body text, so weight — not size — is what separates h3 and below.
+const HEADING = [typeScale.title, typeScale.h2, { ...typeScale.body, fontFamily: font.uiMed }] as const;
 
 function Block({ block }: { block: MdBlock }) {
   if (block.kind === "code")

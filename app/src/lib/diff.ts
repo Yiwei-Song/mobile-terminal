@@ -148,6 +148,51 @@ export const counts = (f: DiffFile): { add: number; del: number } => {
   return { add, del };
 };
 
+/** Every diff line across every file — what render cost scales with. */
+export const lineCount = (files: readonly DiffFile[]): number =>
+  files.reduce((n, f) => n + f.hunks.reduce((m, h) => m + h.lines.length, 0), 0);
+
+/**
+ * Past this many diff lines, DiffView shows per-file totals only. A rendered
+ * line is ~3 native views inside a non-virtualized scroll, so 2000 lines is
+ * already ~6000 views laid out in one pass — an agent regenerating a lockfile
+ * would otherwise freeze the screen. Parsing stays uncapped: 6 MB parses in
+ * ~20ms, and the counts are what the summary shows.
+ */
+export const RENDER_LINE_LIMIT = 2000;
+
+/** Show totals only, not lines? */
+export const tooLargeToRender = (files: readonly DiffFile[]): boolean => lineCount(files) > RENDER_LINE_LIMIT;
+
+// Longer than this and a run of untouched lines is scenery, not context.
+const COLLAPSE_OVER = 6;
+
+export type DiffRow = { kind: "line"; at: number; line: DiffLine } | { kind: "fold"; at: number; n: number };
+
+/**
+ * The rows a hunk renders: every add/del, and each run of more than
+ * COLLAPSE_OVER context lines as one fold row unless its start index is in
+ * `open`. The whole run is one decision — deciding per line would re-fold the
+ * tail of a run the user just opened. `at` is the index the row starts at, so
+ * it is both the React key and what a fold press adds to `open`.
+ */
+export function planRows(lines: readonly DiffLine[], open: readonly number[]): DiffRow[] {
+  const rows: DiffRow[] = [];
+  for (let i = 0; i < lines.length; ) {
+    if (lines[i]!.type !== "ctx") {
+      rows.push({ kind: "line", at: i, line: lines[i]! });
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j < lines.length && lines[j]!.type === "ctx") j++;
+    if (j - i > COLLAPSE_OVER && !open.includes(i)) rows.push({ kind: "fold", at: i, n: j - i });
+    else for (let k = i; k < j; k++) rows.push({ kind: "line", at: k, line: lines[k]! });
+    i = j;
+  }
+  return rows;
+}
+
 /** What the section title should say about the file as a whole. */
 export const fileLabel = (f: DiffFile): { path: string; note: string | null } => {
   if (f.oldPath === "/dev/null") return { path: f.newPath, note: "new file" };

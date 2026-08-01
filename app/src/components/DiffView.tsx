@@ -2,21 +2,33 @@ import { useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { FileX2 } from "lucide-react-native";
 
-import { counts, fileLabel, parseDiff, type DiffFile, type DiffHunk, type DiffLine } from "../lib/diff";
+import {
+  counts,
+  fileLabel,
+  lineCount,
+  parseDiff,
+  planRows,
+  tooLargeToRender,
+  type DiffFile,
+  type DiffHunk,
+  type DiffLine,
+} from "../lib/diff";
 import { color, icon as iconSize, opacity, radius, space, stroke, tint, touch } from "../theme";
 import { MonoText } from "./MonoText";
 import { Text } from "./Text";
-
-// Longer than this and a run of untouched lines is scenery, not context.
-const COLLAPSE_OVER = 6;
 
 /**
  * A unified diff, per file. Adds are accent-tinted, deletes danger-tinted, and
  * every line keeps its number — the three things you need to review a change on
  * a phone. Code never wraps and never clips: each hunk scrolls sideways.
+ *
+ * A diff past RENDER_LINE_LIMIT lines (a regenerated lockfile, say) drops to
+ * per-file totals: laying out tens of thousands of views at once would freeze
+ * the screen, and totals are what you can act on from a phone anyway.
  */
 export function DiffView({ diff }: { diff: string }) {
   const files = useMemo(() => parseDiff(diff), [diff]);
+  const huge = useMemo(() => tooLargeToRender(files), [files]);
 
   if (files.length === 0)
     return (
@@ -30,14 +42,20 @@ export function DiffView({ diff }: { diff: string }) {
 
   return (
     <View style={styles.stack}>
+      {huge && (
+        <Text variant="sub" color="warn">
+          This diff is too large to render in full ({files.length} {files.length === 1 ? "file" : "files"}, ~
+          {lineCount(files)} lines). Showing per-file totals only.
+        </Text>
+      )}
       {files.map((f, i) => (
-        <FileSection key={`${f.oldPath}>${f.newPath}#${i}`} file={f} />
+        <FileSection key={`${f.oldPath}>${f.newPath}#${i}`} file={f} summaryOnly={huge} />
       ))}
     </View>
   );
 }
 
-function FileSection({ file }: { file: DiffFile }) {
+function FileSection({ file, summaryOnly }: { file: DiffFile; summaryOnly: boolean }) {
   const { path, note } = fileLabel(file);
   const { add, del } = counts(file);
   return (
@@ -61,7 +79,7 @@ function FileSection({ file }: { file: DiffFile }) {
         <Text variant="sub" color="textMut">
           Binary file — no line-by-line view.
         </Text>
-      ) : (
+      ) : summaryOnly ? null : (
         file.hunks.map((h, i) => <Hunk key={`${h.header}#${i}`} hunk={h} />)
       )}
     </View>
@@ -72,36 +90,27 @@ function Hunk({ hunk }: { hunk: DiffHunk }) {
   // Keyed by the index the run starts at — stable for a given hunk.
   const [open, setOpen] = useState<readonly number[]>([]);
 
-  const rows: React.ReactNode[] = [];
-  for (let i = 0; i < hunk.lines.length; ) {
-    if (hunk.lines[i]!.type !== "ctx") {
-      rows.push(<Row key={`l${i}`} line={hunk.lines[i]!} />);
-      i++;
-      continue;
-    }
-    // The whole run is one decision: collapsed or not. Deciding per line would
-    // re-fold the tail of a run the user just opened.
-    let j = i;
-    while (j < hunk.lines.length && hunk.lines[j]!.type === "ctx") j++;
-    if (j - i > COLLAPSE_OVER && !open.includes(i)) {
-      const from = i;
-      rows.push(<Fold key={`fold${from}`} n={j - i} onPress={() => setOpen((o) => [...o, from])} />);
-    } else {
-      for (let k = i; k < j; k++) rows.push(<Row key={`l${k}`} line={hunk.lines[k]!} />);
-    }
-    i = j;
-  }
+  const rows = useMemo(() => planRows(hunk.lines, open), [hunk.lines, open]);
 
   return (
     <View style={styles.hunk}>
-      <View style={styles.hunkHead}>
-        <MonoText numberOfLines={1}>{hunk.header}</MonoText>
-      </View>
       {/* One sideways scroll per hunk: the rows stretch to the widest of them,
           so a tint runs the full width of the longest line rather than stopping
-          where its own text ends. minWidth keeps short hunks full-bleed too. */}
+          where its own text ends. minWidth keeps short hunks full-bleed too.
+          The @@ header rides inside it — outside, it truncated. */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.wide}>
-        <View>{rows}</View>
+        <View>
+          <View style={styles.hunkHead}>
+            <MonoText>{hunk.header}</MonoText>
+          </View>
+          {rows.map((r) =>
+            r.kind === "fold" ? (
+              <Fold key={`f${r.at}`} n={r.n} onPress={() => setOpen((o) => [...o, r.at])} />
+            ) : (
+              <Row key={`l${r.at}`} line={r.line} />
+            ),
+          )}
+        </View>
       </ScrollView>
     </View>
   );

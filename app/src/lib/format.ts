@@ -70,11 +70,14 @@ export const bytes = (n: number): string => {
  */
 export const crumbs = (root: string, dir: string): { label: string; path: string }[] => {
   const sep = root.includes("/") && !root.includes("\\") ? "/" : "\\";
-  const under = dir.toLowerCase().startsWith(root.toLowerCase());
+  // On a segment boundary only: `D:\work` is not the root of `D:\workspace\x`.
+  const base = root.replace(/[\\/]+$/, "");
+  const next = dir.charAt(base.length);
+  const under = dir.toLowerCase().startsWith(base.toLowerCase()) && (next === "" || next === "\\" || next === "/");
   if (!under) return [{ label: dir, path: dir }];
-  const rest = dir.slice(root.length).split(/[\\/]/).filter((p) => p !== "");
+  const rest = dir.slice(base.length).split(/[\\/]/).filter((p) => p !== "");
   const out = [{ label: root, path: root }];
-  let at = root.replace(/[\\/]+$/, "");
+  let at = base;
   for (const part of rest) {
     at = `${at}${sep}${part}`;
     out.push({ label: part, path: at });
