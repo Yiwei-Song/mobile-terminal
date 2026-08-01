@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ConfigInfo, Metrics, Proc, PushEvent, SessionEvent, SessionRow, SessionStatus, TermInfo } from "@shared/protocol";
+import type { ConfigInfo, Entry, Metrics, Proc, PushEvent, SessionEvent, SessionRow, SessionStatus, TermInfo } from "@shared/protocol";
 
 import { WorkbenchClient, type ClientOpts, type ConnState } from "./client";
 
@@ -32,6 +32,17 @@ export interface Workbench {
   // The live terminals. Only the list lives here — the bytes belong to the
   // WebView, which holds its own socket straight to the daemon.
   terminals: TermInfo[];
+  // The file browser's world. `dir` travels with `entries` so a screen never
+  // renders one folder's rows under another's breadcrumb.
+  roots: string[];
+  dir: string | null;
+  entries: Entry[];
+  fileText: { path: string; text: string; truncated: boolean } | null;
+  diff: { cwd: string; text: string } | null;
+  // git.status's answer for `cwd`, or null when that folder is not a repo (the
+  // call throws and the Changes affordance stays hidden). NOTE: the paths in
+  // `files` are relative to the REPO TOP, not to `cwd` — shown as given.
+  git: { cwd: string; branch: string; files: { path: string; status: string }[] } | null;
   // Set by the machine.reboot push once a reboot is scheduled: the screen shows a
   // countdown with an Abort while this is non-null. Cleared by abortReboot or a
   // fresh connect — a reboot means the PC is about to drop off anyway.
@@ -62,6 +73,13 @@ export interface Workbench {
   // moment it attaches, so the only thing that matters here is that they are legal.
   createTerminal(cwd: string): Promise<TermInfo>;
   killTerminal(termId: string): Promise<void>;
+  refreshRoots(): Promise<void>;
+  listDir(dir: string): Promise<void>;
+  readFile(path: string): Promise<void>;
+  loadDiff(cwd: string, file?: string): Promise<void>;
+  // Never rejects: "not a repo" is the answer, not a failure, and it decides
+  // whether the Changes affordance exists at all.
+  loadGitStatus(cwd: string): Promise<void>;
   newSession(cwd: string, prompt: string, title?: string): Promise<string>;
   send(sessionId: string, text: string): Promise<void>;
   interrupt(sessionId: string): Promise<void>;
@@ -117,6 +135,12 @@ export const useWorkbench = create<Workbench>((set, get) => ({
   processes: [],
   powerState: null,
   terminals: [],
+  roots: [],
+  dir: null,
+  entries: [],
+  fileText: null,
+  diff: null,
+  git: null,
   rebootPending: null,
   lastError: null,
 
@@ -173,6 +197,12 @@ export const useWorkbench = create<Workbench>((set, get) => ({
       processes: [],
       powerState: null,
       terminals: [],
+      roots: [],
+      dir: null,
+      entries: [],
+      fileText: null,
+      diff: null,
+      git: null,
       rebootPending: null,
       lastError: null,
     });
@@ -371,6 +401,40 @@ export const useWorkbench = create<Workbench>((set, get) => ({
     // term.exit arrives on the event channel, but this store deliberately ignores
     // it (it belongs to the WebView's socket), so drop the row here.
     set({ terminals: get().terminals.filter((t) => t.termId !== termId) });
+  },
+
+  async refreshRoots() {
+    if (client === null) return;
+    // Not tracked: the screen re-asks on every focus and a blip there is not
+    // worth a banner — the empty-roots state already explains itself.
+    set({ roots: await client.request<string[]>("files.roots") });
+  },
+
+  async listDir(dir) {
+    // `dir` lands with its own listing, never before it: a rejected descent must
+    // leave the breadcrumb where the user still is.
+    set({ entries: await track(must().request<Entry[]>("files.list", { dir })), dir });
+  },
+
+  async readFile(path) {
+    const r = await track(must().request<{ text: string; truncated: boolean }>("files.read", { path }));
+    set({ fileText: { path, ...r } });
+  },
+
+  async loadDiff(cwd, file) {
+    const r = await track(must().request<{ diff: string }>("git.diff", { cwd, file }));
+    set({ diff: { cwd, text: r.diff } });
+  },
+
+  async loadGitStatus(cwd) {
+    if (client === null) return;
+    try {
+      const r = await client.request<{ branch: string; files: { path: string; status: string }[] }>("git.status", { cwd });
+      set({ git: { cwd, ...r } });
+    } catch {
+      // Not a repo (or git is not installed): there are no changes to offer.
+      set({ git: null });
+    }
   },
 
   async refreshPowerState() {

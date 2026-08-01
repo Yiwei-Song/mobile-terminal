@@ -46,3 +46,9 @@ export const icon = { sm: 16, md: 20, lg: 24, xl: 40 } as const;
 
 /** Letter spacing for all-caps section labels. */
 export const tracking = { label: 1 } as const;
+
+/**
+ * Diff line backgrounds: accent/danger at low alpha, so a whole line reads as
+ * added or removed without pushing the mono text off the contrast floor.
+ */
+export const tint = { add: "#22C55E24", del: "#EF444424" } as const;

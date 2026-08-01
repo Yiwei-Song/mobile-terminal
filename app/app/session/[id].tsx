@@ -10,7 +10,7 @@ import {
   type NativeSyntheticEvent,
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
-import { ArrowDown, MessageSquare, ShieldAlert, StopCircle, WifiOff } from "lucide-react-native";
+import { ArrowDown, GitCompare, MessageSquare, ShieldAlert, StopCircle, WifiOff } from "lucide-react-native";
 
 import { ApprovalCard } from "../../src/components/ApprovalCard";
 import { BackButton } from "../../src/components/BackButton";
@@ -77,6 +77,18 @@ export default function SessionScreen() {
             </View>
           )}
         </View>
+        {/* What the agent actually did to the working tree, one tap away —
+            reviewing the diff is the other half of answering an approval. */}
+        {session !== undefined && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Changes in ${session.cwd}`}
+            onPress={() => router.push({ pathname: "/files", params: { diff: session.cwd } })}
+            style={({ pressed }) => [styles.iconBtn, pressed && { opacity: opacity.pressed }]}
+          >
+            <GitCompare size={iconSize.lg} color={color.textMut} strokeWidth={stroke.icon} />
+          </Pressable>
+        )}
         {status !== undefined && <StatusChip status={status} />}
         {status === "running" && (
           <Pressable

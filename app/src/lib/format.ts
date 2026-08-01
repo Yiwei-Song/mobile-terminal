@@ -41,3 +41,43 @@ export const cwdTail = (cwd: string): string => {
   const sep = cwd.includes("\\") ? "\\" : "/";
   return `…${sep}${parts.slice(-2).join(sep)}`;
 };
+
+const UNITS = ["KB", "MB", "GB", "TB"] as const;
+
+/**
+ * A file size at a glance: `840 B`, `1.2 KB`, `3.4 MB`, `12 GB`. One decimal
+ * under ten, none above — the extra digit stops mattering once the magnitude
+ * carries the meaning. Binary (1024) units, which is what the fs reports.
+ */
+export const bytes = (n: number): string => {
+  if (!Number.isFinite(n) || n < 0) return "—";
+  if (n < 1024) return `${Math.round(n)} B`;
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < UNITS.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${UNITS[i]}`;
+};
+
+/**
+ * The breadcrumb for `dir` under `root`: the root itself, then one crumb per
+ * segment below it. A dir that is not under the root (shouldn't happen — the
+ * daemon refuses it) degrades to a single crumb rather than lying about a
+ * hierarchy. Never produces a crumb above the root: that is the one place the
+ * user cannot go.
+ */
+export const crumbs = (root: string, dir: string): { label: string; path: string }[] => {
+  const sep = root.includes("/") && !root.includes("\\") ? "/" : "\\";
+  const under = dir.toLowerCase().startsWith(root.toLowerCase());
+  if (!under) return [{ label: dir, path: dir }];
+  const rest = dir.slice(root.length).split(/[\\/]/).filter((p) => p !== "");
+  const out = [{ label: root, path: root }];
+  let at = root.replace(/[\\/]+$/, "");
+  for (const part of rest) {
+    at = `${at}${sep}${part}`;
+    out.push({ label: part, path: at });
+  }
+  return out;
+};
