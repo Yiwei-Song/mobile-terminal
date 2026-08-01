@@ -8,7 +8,7 @@
 // line without ever running one.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { spawn as Spawn, ChildProcess } from "child_process";
+import type { spawn as Spawn, spawnSync as SpawnSync, ChildProcess } from "child_process";
 import type { ToolSpec, ToolStatus } from "./protocol.js";
 
 // The wire shapes live in protocol.ts (the app re-exports it); re-exported here
@@ -17,6 +17,9 @@ export type { ToolSpec, ToolStatus };
 
 export interface ToolDeps {
   spawn: typeof Spawn;
+  // The kill is SYNC — see killTree. Injected separately because it is a
+  // different function, not because the tests want two knobs.
+  spawnSync: typeof SpawnSync;
 }
 
 export class ToolRunner {
@@ -81,21 +84,32 @@ export class ToolRunner {
     return this.specs.map((s) => this.statusOf(s));
   }
 
-  /** Daemon exit. Without it a `docker compose up` outlives the daemon. */
+  /** Daemon exit. Without it a `docker compose up` outlives the daemon.
+   *  Safe to call from `process.on("exit")`: fully synchronous, all the way
+   *  down — see killTree for why that is the whole point. */
   stopAll(): void {
     for (const name of [...this.children.keys()]) this.stop(name);
   }
 
   private killTree(child: ChildProcess): void {
+    if (child.pid === undefined) return;
     // Every interesting tool spawns children (the shell above, then docker's or
     // node's own), and on Windows killing the parent orphans them — same
     // reasoning as power.ts. /T is the tree, /F is "do not ask".
-    if (process.platform === "win32" && child.pid !== undefined) {
-      this.deps
-        .spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" })
-        // taskkill exits non-zero for an already-dead pid; that is the outcome
-        // we wanted. An unhandled error event would take the daemon down.
-        .on("error", () => {});
+    //
+    // spawnSYNC, not spawn: stopAll() runs from process.on("exit"), and an async
+    // spawn there is never scheduled — Node exits first. libuv then closes the
+    // job object, which kills our cmd.exe shell while the REAL tool (docker, a
+    // node server) silently breaks away and survives, invisible to the next
+    // daemon. Sync taskkill runs while the shell is still alive, so /T has a
+    // tree to walk.
+    // ponytail: the interactive stop() RPC shares this path rather than keeping
+    // an async twin — taskkill /F is tens of ms and does not wait on the target.
+    // Its non-zero exit for an already-dead pid is the outcome we wanted, and
+    // spawnSync reports a failed spawn in its return value instead of throwing
+    // or emitting an unhandled "error", so there is nothing to handle.
+    if (process.platform === "win32") {
+      this.deps.spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
       return;
     }
     child.kill();

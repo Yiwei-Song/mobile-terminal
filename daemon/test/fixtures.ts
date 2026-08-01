@@ -64,6 +64,7 @@ export function fakePty() {
 // fakeMachine — the one thing neither may do is launch a real Docker.
 export function fakeSpawn() {
   const calls: { command: string; args: string[]; opts: any }[] = [];
+  const sync: { command: string; args: string[]; opts: any }[] = [];
   const children: any[] = [];
   let pid = 1000;
   const spawn = ((command: string, args: string[], opts: object) => {
@@ -81,7 +82,14 @@ export function fakeSpawn() {
     children.push(child);
     return child;
   }) as unknown as ToolDeps["spawn"];
-  return { deps: { spawn } satisfies ToolDeps, calls, children };
+  // The kill path. Records argv and answers with the everyday taskkill outcome
+  // — non-zero + an error, because the pid is usually already gone — so every
+  // test that stops a tool also proves the runner ignores the result.
+  const spawnSync = ((command: string, args: string[], opts: object) => {
+    sync.push({ command, args, opts: opts as any });
+    return { status: 1, error: new Error("ERROR: The process ... not found."), signal: null };
+  }) as unknown as ToolDeps["spawnSync"];
+  return { deps: { spawn, spawnSync } satisfies ToolDeps, calls, sync, children };
 }
 
 // A full MachineDeps backed by fakes: real KeepAwake (hold state observable via

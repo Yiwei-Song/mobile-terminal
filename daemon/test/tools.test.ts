@@ -52,7 +52,7 @@ describe("ToolRunner.start", () => {
 });
 
 describe("ToolRunner.stop", () => {
-  it("kills the process TREE on win32", () => {
+  it("kills the process TREE on win32, SYNCHRONOUSLY", () => {
     const { spawn, tools } = runner();
     tools.start("docker");
     const pid = spawn.children[0]!.pid;
@@ -62,8 +62,12 @@ describe("ToolRunner.stop", () => {
     if (win) {
       // The tool's own children (containers' CLI, node workers) outlive a plain
       // kill on Windows — /T is the whole reason this is not child.kill().
-      expect(spawn.calls[1]!.command).toBe("taskkill");
-      expect(spawn.calls[1]!.args).toEqual(["/pid", String(pid), "/T", "/F"]);
+      // And it must be spawnSync: an async spawn from process.on("exit") never
+      // runs, which is exactly how tools used to survive the daemon.
+      expect(spawn.sync).toEqual([
+        { command: "taskkill", args: ["/pid", String(pid), "/T", "/F"], opts: expect.anything() },
+      ]);
+      expect(spawn.calls).toHaveLength(1); // the tool itself, and nothing async after it
     } else {
       expect(spawn.children[0]!.kill).toHaveBeenCalled();
     }
@@ -74,17 +78,17 @@ describe("ToolRunner.stop", () => {
     const { spawn, tools } = runner();
     expect(tools.stop("vite")).toEqual({ name: "vite", running: false, pid: undefined, port: 5173 });
     expect(spawn.calls).toHaveLength(0);
+    expect(spawn.sync).toHaveLength(0);
   });
 
-  it("survives a taskkill that cannot spawn", () => {
-    const { spawn, tools } = runner();
+  it("survives a taskkill that fails (the fake always reports one)", () => {
+    const { tools } = runner();
     tools.start("docker");
-    // An unhandled "error" event on a ChildProcess throws; the killTree handler
-    // is what keeps a missing taskkill.exe from taking the daemon down.
-    expect(() => {
-      tools.stop("docker");
-      if (win) spawn.children[1]!.fire("error", new Error("ENOENT"));
-    }).not.toThrow();
+    // spawnSync reports a failed spawn in its return value rather than throwing
+    // or emitting an unhandled "error" — so a missing taskkill.exe, or the
+    // usual already-dead pid, must not take the daemon down.
+    expect(() => tools.stop("docker")).not.toThrow();
+    expect(tools.status()[0]!.running).toBe(false);
   });
 });
 
@@ -123,7 +127,7 @@ describe("ToolRunner.status", () => {
     stale.fire("exit", 0); // the first child's exit lands late
 
     expect(tools.status()[0]!.running).toBe(true);
-    expect(tools.status()[0]!.pid).toBe(spawn.children[win ? 2 : 1]!.pid);
+    expect(tools.status()[0]!.pid).toBe(spawn.children[1]!.pid);
   });
 });
 
@@ -138,8 +142,11 @@ describe("ToolRunner.stopAll", () => {
 
     expect(tools.status().every((s) => !s.running)).toBe(true);
     if (win) {
-      const killed = spawn.calls.filter((c) => c.command === "taskkill").map((c) => c.args[1]);
-      expect(killed).toEqual([String(pids[0]), String(pids[1])]);
+      // Every kill on the SYNC path: stopAll is called from process.on("exit"),
+      // where anything async is dead on arrival.
+      expect(spawn.sync.map((c) => c.command)).toEqual(["taskkill", "taskkill"]);
+      expect(spawn.sync.map((c) => c.args[1])).toEqual([String(pids[0]), String(pids[1])]);
+      expect(spawn.calls).toHaveLength(2); // the two tools; stopAll spawned nothing
     } else {
       expect(spawn.children.every((c) => c.kill.mock.calls.length === 1)).toBe(true);
     }

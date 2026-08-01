@@ -1,5 +1,5 @@
 import { networkInterfaces } from "node:os";
-import { spawn, exec } from "node:child_process";
+import { spawn, spawnSync, exec } from "node:child_process";
 import * as si from "systeminformation";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import qrcode from "qrcode-terminal";
@@ -47,7 +47,7 @@ for (const sig of ["SIGINT", "SIGTERM", "SIGBREAK"] as const) process.on(sig, ()
 
 // The user's declared dev services. No tools.json (the default) means an empty
 // list and a Tools screen that explains how to opt in.
-const tools = new ToolRunner({ spawn }, loadToolSpecs(cfg.dataDir));
+const tools = new ToolRunner({ spawn, spawnSync }, loadToolSpecs(cfg.dataDir));
 
 // ponytail: single-push-ref; event bus if the daemon grows. The registry is
 // built before the server (it *is* the server's handler), so its push starts as
