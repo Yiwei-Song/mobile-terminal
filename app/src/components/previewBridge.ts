@@ -22,6 +22,12 @@ export interface PreviewHandle {
 export interface PreviewViewProps {
   /** `http://<daemon host>:<port>` — the dev server the user picked. */
   url: string;
+  /**
+   * The daemon's own HTTP origin — a public address, not a secret. Passed in so
+   * the frame can REFUSE to navigate there: the daemon serves the terminal page,
+   * and a hostile preview page must not be able to put it in front of the user.
+   */
+  daemonOrigin: string;
   /** Where the frame actually ended up, so the toolbar can tell the truth. */
   onNav?: (n: PreviewNav) => void;
 }

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { router, useFocusEffect } from "expo-router";
+import * as Linking from "expo-linking";
 import {
   ArrowLeft,
   ArrowRight,
+  ExternalLink,
   List,
   MonitorSmartphone,
   RefreshCw,
@@ -25,7 +27,7 @@ import type { PreviewHandle } from "../src/components/previewBridge";
 import { Screen } from "../src/components/Screen";
 import { Text } from "../src/components/Text";
 import { demoMode, seedDemo } from "../src/lib/demo";
-import { loadPairing, pairingUrl, type Pairing } from "../src/lib/pairing";
+import { daemonOrigin, loadPairing, pairingUrl, type Pairing } from "../src/lib/pairing";
 import { useWorkbench } from "../src/lib/store";
 import { color, icon as iconSize, opacity, radius, space, stroke, touch, tracking } from "../src/theme";
 
@@ -59,6 +61,9 @@ export default function Preview() {
   // Demo mode has no pairing (it *is* the connection); point the frame at the
   // host the demo ports pretend to live on so the screen renders end to end.
   const host = pairing !== null ? pairing.host : "localhost";
+  // Public address, never the token — the frame is told this so it can refuse to
+  // navigate *to* the daemon. Empty until paired, which refuses nothing.
+  const origin = pairing !== null ? daemonOrigin(pairing) : "";
 
   useFocusEffect(
     useCallback(() => {
@@ -138,7 +143,7 @@ export default function Preview() {
       {port !== null ? (
         <>
           <View style={styles.frame}>
-            <PreviewView ref={frame} url={`http://${host}:${port}`} onNav={setNav} />
+            <PreviewView ref={frame} url={`http://${host}:${port}`} daemonOrigin={origin} onNav={setNav} />
           </View>
           {/* Browser chrome at the bottom, where the thumb is. */}
           <View style={styles.toolbar}>
@@ -158,6 +163,14 @@ export default function Preview() {
             <MonoText numberOfLines={1} style={styles.toolbarUrl}>
               {nav.url}
             </MonoText>
+            {/* The escape hatch. A WebView has no devtools, no password manager
+                and no share sheet — the real browser has all three, and it is
+                one tap away rather than a retyped IP. */}
+            <IconButton
+              icon={ExternalLink}
+              label="Open in browser"
+              onPress={() => void Linking.openURL(nav.url).catch(() => {})}
+            />
             <IconButton icon={List} label="Choose another port" onPress={() => setPort(null)} />
           </View>
         </>

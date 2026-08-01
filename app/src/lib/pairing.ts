@@ -34,6 +34,18 @@ export const daemonOrigin = (p: Pick<Pairing, "host" | "port">): string => `http
 export const sameOrigin = (url: string, origin: string): boolean =>
   url === origin || ["/", "?", "#"].some((sep) => url.startsWith(origin + sep));
 
+/**
+ * May the preview frame navigate to `url`? The inverse of the terminal's rule:
+ * the preview holds no token but loads pages we do not trust, so the daemon's
+ * own origin is the one place it must never go — `/terminal?dev=1` prompts for
+ * the daemon token, and inside the app that prompt looks entirely legitimate.
+ *
+ * http(s) only: everything else (intent:, file:, javascript:) is either handed
+ * to the OS or run in the frame, and a dev server preview needs neither.
+ */
+export const allowPreviewNav = (url: string, origin: string): boolean =>
+  /^https?:\/\//i.test(url) && !sameOrigin(url, origin);
+
 // Both sources of a pairing are untrusted input — a partial write, an older app
 // version, a user poking localStorage, or a QR that isn't ours. Anything that is
 // not a whole pairing is "not paired", and that path already ends at the pair screen.

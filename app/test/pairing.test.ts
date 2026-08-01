@@ -108,6 +108,47 @@ describe("sameOrigin", () => {
   });
 });
 
+// The preview WebView holds no token but loads pages nobody vetted, so its rule
+// is sameOrigin inverted: the daemon's origin is the one place it may not go.
+describe("allowPreviewNav", () => {
+  const O = "http://192.168.1.24:8790";
+
+  it("refuses the daemon's own origin, whatever the path", async () => {
+    const { allowPreviewNav } = await importFor("android");
+    expect(allowPreviewNav(O, O)).toBe(false);
+    // The phishing case: the daemon's terminal page prompts for the token.
+    expect(allowPreviewNav(`${O}/terminal?dev=1`, O)).toBe(false);
+    expect(allowPreviewNav(`${O}#top`, O)).toBe(false);
+  });
+
+  it("allows any other http(s) origin, including a near-miss prefix", async () => {
+    const { allowPreviewNav } = await importFor("android");
+    expect(allowPreviewNav("http://192.168.1.24:5173/", O)).toBe(true);
+    expect(allowPreviewNav("https://example.com/docs", O)).toBe(true);
+    expect(allowPreviewNav("http://192.168.1.24:87900/", O)).toBe(true);
+    // Same host+port over TLS is a different origin, so it is not the daemon.
+    expect(allowPreviewNav(`https://192.168.1.24:8790/`, O)).toBe(true);
+  });
+
+  it("refuses everything that is not http(s)", async () => {
+    const { allowPreviewNav } = await importFor("android");
+    for (const u of [
+      "javascript:alert(1)",
+      "file:///C:/Windows/win.ini",
+      "intent://scan#Intent;scheme=zxing;end",
+      "data:text/html,<script>1</script>",
+      "about:blank",
+      "",
+    ])
+      expect(allowPreviewNav(u, O), u).toBe(false);
+  });
+
+  it("is given a public address, not the token", async () => {
+    const { daemonOrigin } = await importFor("android");
+    expect(daemonOrigin(P)).not.toContain(P.token);
+  });
+});
+
 // verify against the real daemon over real sockets — a stub server would prove
 // nothing about the three answers the pair screen branches on.
 describe("verify", () => {

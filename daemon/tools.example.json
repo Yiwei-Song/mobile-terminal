@@ -1,5 +1,6 @@
 [
   {
+    "_readme": "Every command runs through a shell, and its args are NOT quoted for you: an arg with a space splits in two, and one with & | > splits the command. Quote them yourself, e.g. \"args\": [\"--dir\", \"\\\"C:\\\\Program Files\\\\x\\\"\"]. Unknown keys like this one are ignored.",
     "name": "docker",
     "command": "docker",
     "args": ["compose", "up", "-d"],

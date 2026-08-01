@@ -30,6 +30,11 @@ export const PreviewView = forwardRef<PreviewHandle, PreviewViewProps>(function 
       key={nonce}
       title="Preview"
       src={url}
+      // No allow-top-navigation: a hostile preview page must not be able to
+      // steer the app window itself. Omitting allow-same-origin is what makes
+      // the rest of the list safe to grant — the page runs in an opaque origin,
+      // so nothing it stores can reach the app's.
+      sandbox="allow-scripts allow-forms allow-popups"
       style={{ flex: 1, width: "100%", border: "none", background: canvas }}
     />
   );

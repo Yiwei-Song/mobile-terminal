@@ -38,6 +38,14 @@ export class ToolRunner {
     // npx, docker-compose) and Node refuses to spawn those without one. The
     // string is assembled from the user's own tools.json, never from the wire —
     // `name` is the only thing a client supplies and it only ever indexes.
+    //
+    // FOOTGUN: with shell: true Node does NOT quote the args — command and args
+    // are joined with spaces and handed to cmd.exe/sh as one line. So an arg
+    // containing a space splits into two, and one containing & | > splits the
+    // command in half. Whoever writes tools.json must quote it themselves:
+    // "args": ["--dir", "\"C:\\Program Files\\x\""]. Documented in
+    // tools.example.json; not escaped here because the file is the user's own
+    // and escaping would break the shell syntax people legitimately put in it.
     const child = this.deps.spawn(spec.command, spec.args ?? [], {
       cwd: spec.cwd,
       shell: true,
