@@ -8,6 +8,14 @@ export interface Pairing {
   host: string;
   port: number;
   token: string;
+  /**
+   * Set only when this build was served BY the daemon (the tunnel case: the web
+   * export at https://xyz.trycloudflare.com). Then the daemon is this page's own
+   * origin, and host/port cannot describe it — a tunnel is https with no port,
+   * so the socket has to be wss and the URL must carry no ":443". When present
+   * it wins; host/port are kept alongside only so the UI has something to show.
+   */
+  origin?: string;
 }
 
 // expo-secure-store has no web implementation (the browser has no keychain), so
@@ -24,11 +32,48 @@ const KEY = "workbench.pairing";
 const authority = (host: string, port: number): string =>
   `${host.includes(":") && !host.startsWith("[") ? `[${host}]` : host}:${port}`;
 
+type Addr = Pick<Pairing, "host" | "port" | "origin">;
+
 /** The daemon's WS endpoint. One place, so a path change is one edit. */
-export const pairingUrl = (p: Pick<Pairing, "host" | "port">): string => `ws://${authority(p.host, p.port)}/ws`;
+export const pairingUrl = (p: Addr): string =>
+  `${p.origin === undefined ? `ws://${authority(p.host, p.port)}` : p.origin.replace(/^http/, "ws")}/ws`;
 
 /** The daemon's HTTP origin — what the terminal WebView is allowed to load. */
-export const daemonOrigin = (p: Pick<Pairing, "host" | "port">): string => `http://${authority(p.host, p.port)}`;
+export const daemonOrigin = (p: Addr): string => p.origin ?? `http://${authority(p.host, p.port)}`;
+
+/** How the user reads this pairing back: an origin, or the host:port they typed. */
+export const pairingLabel = (p: Addr): string => p.origin ?? authority(p.host, p.port);
+
+// An origin and nothing else: scheme, authority, no path — the same shape
+// sameOrigin() compares against, so a trailing "/" or a path here would silently
+// break the WebView's origin pin.
+const ORIGIN_RE = /^https?:\/\/[^/?#\\]+$/;
+
+/**
+ * The origin serving this build, when it could be the daemon's — i.e. a browser
+ * (the app's web export, served by the daemon over the tunnel). null on native,
+ * where there is no `location` and the daemon is always somewhere else.
+ */
+export const servedOrigin = (): string | null => {
+  if (Platform.OS !== "web") return null;
+  const l = (globalThis as { location?: { protocol?: string; host?: string } }).location;
+  const o = l ? `${l.protocol}//${l.host}` : "";
+  return ORIGIN_RE.test(o) ? o : null;
+};
+
+/**
+ * A pairing for the daemon that served this page. The token is the only thing
+ * the user has to supply: everything else is where the page came from.
+ */
+export const sameOriginPairing = (token: string): Pairing | null => {
+  const origin = servedOrigin();
+  if (origin === null) return null;
+  const l = location;
+  // host/port are display-only here (origin wins in every builder above), but a
+  // Pairing without them is not a Pairing — a tunnel has no port, so the scheme's
+  // default stands in.
+  return { host: l.hostname, port: Number(l.port) || (l.protocol === "https:" ? 443 : 80), token, origin };
+};
 
 /**
  * Is `url` on `origin`? The terminal WebView holds the daemon token, so a page
@@ -61,7 +106,10 @@ export const parsePairing = (raw: string | null): Pairing | null => {
   try {
     const v = JSON.parse(raw) as Partial<Pairing>;
     if (typeof v.host !== "string" || typeof v.port !== "number" || typeof v.token !== "string") return null;
-    return { host: v.host, port: v.port, token: v.token };
+    // An origin decides where the token is sent and what the WebView may load,
+    // so anything that is not exactly an origin is dropped rather than trusted.
+    const origin = typeof v.origin === "string" && ORIGIN_RE.test(v.origin) ? v.origin : undefined;
+    return origin === undefined ? { host: v.host, port: v.port, token: v.token } : { host: v.host, port: v.port, token: v.token, origin };
   } catch {
     return null;
   }

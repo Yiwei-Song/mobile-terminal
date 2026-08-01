@@ -11,14 +11,28 @@ import { MonoText } from "../src/components/MonoText";
 import { Notice } from "../src/components/Notice";
 import { Screen } from "../src/components/Screen";
 import { Text } from "../src/components/Text";
-import { loadPairing, parsePairing, savePairing, verify, webInsecureStorage, type Pairing } from "../src/lib/pairing";
+import {
+  loadPairing,
+  pairingLabel,
+  parsePairing,
+  sameOriginPairing,
+  savePairing,
+  servedOrigin,
+  verify,
+  webInsecureStorage,
+  type Pairing,
+} from "../src/lib/pairing";
 import { color, radius, space, stroke } from "../src/theme";
 
-type Mode = "intro" | "manual" | "permission" | "scanning";
+type Mode = "intro" | "served" | "manual" | "permission" | "scanning";
 type Failure = { title: string; body: string; retry: Pairing | null };
 
 // Camera scanning needs a camera; the web review build does not have one.
 const CAN_SCAN = Platform.OS !== "web";
+// This page came from somewhere; over the tunnel that somewhere IS the daemon,
+// which makes the host and port fields meaningless — the token is the whole
+// pairing. Constant per page load, so it is read once.
+const SERVED = servedOrigin();
 
 export default function Pair() {
   // Settings' "Server" row sets edit=1 so a re-pair is an edit, not a retype.
@@ -26,7 +40,7 @@ export default function Pair() {
   // the token out of the route URL (web address bar, history, nav state).
   const { edit } = useLocalSearchParams<{ edit?: string }>();
 
-  const [mode, setMode] = useState<Mode>(edit === undefined ? "intro" : "manual");
+  const [mode, setMode] = useState<Mode>(SERVED !== null ? "served" : edit === undefined ? "intro" : "manual");
   const [host, setHost] = useState("");
   const [port, setPort] = useState("8790");
   const [token, setToken] = useState("");
@@ -67,7 +81,7 @@ export default function Pair() {
         return;
       }
     }
-    setMode("manual");
+    setMode(p.origin === undefined ? "manual" : "served");
     setFailure(
       state === "unauthorized"
         ? {
@@ -76,11 +90,22 @@ export default function Pair() {
             retry: null,
           }
         : {
-            title: `Can't reach ${p.host}:${p.port}`,
+            title: `Can't reach ${pairingLabel(p)}`,
             body: "Same wifi? VPN off? Is the daemon still running on your PC?",
             retry: p,
           },
     );
+  };
+
+  // The tunnel flow: the daemon served this page, so the token is all that is
+  // missing. A null here would mean SERVED lied, which it cannot.
+  const submitServed = () => {
+    const p = sameOriginPairing(token.trim());
+    if (token.trim() === "" || p === null) {
+      setFailure({ title: "Paste your token", body: "The daemon prints it next to the QR code.", retry: null });
+      return;
+    }
+    void submit(p);
   };
 
   const submitManual = () => {
@@ -177,7 +202,29 @@ export default function Pair() {
           </Card>
         )}
 
-        {mode === "permission" ? (
+        {mode === "served" ? (
+          <>
+            <Card>
+              <Text variant="h2">This page is your daemon</Text>
+              <Text variant="body" color="textMut" style={styles.gapTop}>
+                It was served from the address below, so there is no host or port to type — just the token your daemon
+                printed.
+              </Text>
+              <View style={styles.cmd}>
+                <MonoText color="text">{SERVED ?? ""}</MonoText>
+              </View>
+            </Card>
+            <Field
+              label="Token"
+              value={token}
+              onChangeText={setToken}
+              placeholder="paste from the daemon"
+              hint="The daemon prints it next to the QR code."
+              multiline
+              mono
+            />
+          </>
+        ) : mode === "permission" ? (
           <Card>
             <Text variant="h2">Camera access</Text>
             <Text variant="body" color="textMut" style={styles.gapTop}>
@@ -237,7 +284,20 @@ export default function Pair() {
 
       {/* Bottom-anchored: the primary action stays under the thumb. */}
       <View style={styles.actions}>
-        {mode === "permission" ? (
+        {mode === "served" ? (
+          <>
+            <Button
+              label={busy ? "Connecting…" : "Connect"}
+              loading={busy}
+              disabled={token.trim() === ""}
+              fill
+              onPress={submitServed}
+            />
+            {/* The escape hatch: this build also runs from a dev server, where
+                the page's own origin is Metro and not a daemon at all. */}
+            <Button label="Use a different host" variant="ghost" icon={Keyboard} onPress={() => setMode("manual")} />
+          </>
+        ) : mode === "permission" ? (
           <>
             <Button label="Allow camera" icon={Camera} fill onPress={() => void allowCamera()} />
             <Button label="Enter manually instead" variant="ghost" onPress={() => setMode("manual")} />

@@ -96,6 +96,88 @@ describe("pairingUrl", () => {
   });
 });
 
+// Served from the daemon itself (the Cloudflare tunnel: the web export at
+// https://xyz.trycloudflare.com). There is no host or port to pair with then —
+// the connection is wherever this page came from, and a tunnel is https with no
+// port, so a hardcoded ws:// + ":443" would be wrong twice over.
+describe("same-origin pairing", () => {
+  const at = (protocol: string, hostname: string, port = "") => {
+    Object.defineProperty(globalThis, "location", {
+      value: { protocol, hostname, port, host: port === "" ? hostname : `${hostname}:${port}` },
+      configurable: true,
+    });
+  };
+  afterEach(() => {
+    delete (globalThis as { location?: unknown }).location;
+  });
+
+  it("derives wss and no port from an https page", async () => {
+    const { sameOriginPairing, pairingUrl, daemonOrigin, pairingLabel } = await importFor("web");
+    at("https:", "xyz.trycloudflare.com");
+
+    const p = sameOriginPairing("tok");
+    expect(p).toEqual({ host: "xyz.trycloudflare.com", port: 443, token: "tok", origin: "https://xyz.trycloudflare.com" });
+    expect(pairingUrl(p!)).toBe("wss://xyz.trycloudflare.com/ws");
+    expect(daemonOrigin(p!)).toBe("https://xyz.trycloudflare.com");
+    expect(pairingLabel(p!)).toBe("https://xyz.trycloudflare.com");
+  });
+
+  it("derives ws and keeps an explicit port from an http page", async () => {
+    const { sameOriginPairing, pairingUrl, daemonOrigin } = await importFor("web");
+    at("http:", "localhost", "8790");
+
+    const p = sameOriginPairing("tok")!;
+    expect(p.port).toBe(8790);
+    expect(pairingUrl(p)).toBe("ws://localhost:8790/ws");
+    expect(daemonOrigin(p)).toBe("http://localhost:8790");
+  });
+
+  it("is never same-origin on native, whatever globals exist", async () => {
+    const { servedOrigin, sameOriginPairing } = await importFor("android");
+    at("https:", "xyz.trycloudflare.com");
+
+    expect(servedOrigin()).toBeNull();
+    expect(sameOriginPairing("tok")).toBeNull();
+  });
+
+  it("leaves an explicit host/port pairing exactly as it was", async () => {
+    const { pairingUrl, daemonOrigin } = await importFor("web");
+    at("https:", "xyz.trycloudflare.com");
+    const v6 = "fd7a:115c:a1e0:ab12:4843:cd96:6250:1a2b";
+
+    // No origin on the pairing, no derivation: the native/LAN path is untouched
+    // even when a `location` happens to exist.
+    expect(pairingUrl(P)).toBe("ws://192.168.1.24:8790/ws");
+    expect(daemonOrigin(P)).toBe("http://192.168.1.24:8790");
+    expect(pairingUrl({ host: v6, port: 8790 })).toBe(`ws://[${v6}]:8790/ws`);
+  });
+
+  // An origin decides where the token is posted and what the terminal WebView
+  // may load, and storage (or a QR) is untrusted input.
+  it("keeps a stored origin only if it is exactly an origin", async () => {
+    const { parsePairing } = await importFor("web");
+    const base = { host: "h", port: 1, token: "t" };
+
+    expect(parsePairing(JSON.stringify({ ...base, origin: "https://xyz.trycloudflare.com" }))?.origin).toBe(
+      "https://xyz.trycloudflare.com",
+    );
+    for (const origin of ["https://evil.example/path", "javascript:alert(1)", "xyz.trycloudflare.com", 7, null, ""])
+      expect(parsePairing(JSON.stringify({ ...base, origin })), String(origin)).toEqual(base);
+  });
+
+  // The tunnel's terminal iframe is pinned to this origin; the pin has to hold
+  // for an https origin with no port too.
+  it("pins the WebView to the tunnel origin", async () => {
+    const { sameOrigin, allowPreviewNav } = await importFor("web");
+    const O = "https://xyz.trycloudflare.com";
+
+    expect(sameOrigin(`${O}/terminal`, O)).toBe(true);
+    expect(sameOrigin("https://xyz.trycloudflare.com.evil.example/terminal", O)).toBe(false);
+    expect(allowPreviewNav(`${O}/terminal?dev=1`, O)).toBe(false);
+    expect(allowPreviewNav("https://example.com/", O)).toBe(true);
+  });
+});
+
 // The terminal WebView holds the daemon token, so this predicate is what stops
 // a navigation carrying it off the machine it belongs to.
 describe("sameOrigin", () => {

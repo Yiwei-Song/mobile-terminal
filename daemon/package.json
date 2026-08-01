@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc -p .",
+    "build:app": "cd ../app && npx expo export --platform web",
     "test": "tsc -p tsconfig.test.json && vitest run",
     "e2e": "node scripts/e2e.mjs",
     "smoke": "tsx scripts/smoke.ts",

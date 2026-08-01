@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { hostname, networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
@@ -150,6 +150,71 @@ describe("server", () => {
     await srv.close();
   });
 
+  // Everything below is what stops the daemon being a free resource for anyone
+  // who can reach the port — which, behind a tunnel, is the whole internet.
+  it("closes a socket that never authenticates, and leaves an authed one alone", async () => {
+    const cfg = cfgFor();
+    const srv = await startServer(cfg, async () => null, { authMs: 30 });
+
+    const silent = open(srv.port);
+    await opened(silent);
+    expect(await closed(silent)).toBe(4001);
+
+    // The same timer must not fire behind a socket that did authenticate.
+    const good = open(srv.port);
+    await opened(good);
+    good.send(JSON.stringify({ type: "auth", token: cfg.token }));
+    await next(good);
+    await new Promise((r) => setTimeout(r, 90)); // several auth deadlines
+    expect(good.readyState).toBe(WebSocket.OPEN);
+
+    good.close();
+    await srv.close();
+  });
+
+  it("caps concurrent sockets", async () => {
+    const cfg = cfgFor();
+    // Unauthenticated sockets count: holding them open is the attack.
+    const srv = await startServer(cfg, async () => null, { authMs: 5_000 });
+
+    const socks: WebSocket[] = [];
+    for (let i = 0; i < 8; i++) {
+      const ws = open(srv.port);
+      await opened(ws);
+      socks.push(ws);
+    }
+    const extra = open(srv.port);
+    await opened(extra);
+    expect(await closed(extra)).toBe(4002);
+    expect(socks.every((ws) => ws.readyState === WebSocket.OPEN)).toBe(true);
+
+    for (const ws of socks) ws.close();
+    await srv.close();
+  });
+
+  it("drops an oversized frame instead of buffering it", async () => {
+    const cfg = cfgFor();
+    const srv = await startServer(cfg, async () => null);
+
+    const hog = open(srv.port);
+    await opened(hog);
+    // Inbound frames are auth + small JSON requests; 2 MiB is over the 1 MiB cap.
+    hog.send(JSON.stringify({ type: "auth", token: "x".repeat(2 * 1024 * 1024) }));
+    // 1006, not ws's 1009: the payload cap raises an "error", and this daemon's
+    // error handler terminates rather than politely closing. Either way the
+    // frame was never buffered and the socket is gone.
+    expect(await closed(hog)).toBe(1006);
+
+    // …and the daemon itself is untouched by it.
+    const good = open(srv.port);
+    await opened(good);
+    good.send(JSON.stringify({ type: "auth", token: cfg.token }));
+    expect((await next(good)).type).toBe("auth.ok");
+
+    good.close();
+    await srv.close();
+  });
+
   it("rejects instead of hanging when the port is taken", async () => {
     const first = await startServer(cfgFor(), async () => null);
     await expect(startServer({ ...cfgFor(), port: first.port }, async () => null)).rejects.toThrow();
@@ -214,13 +279,84 @@ describe("server", () => {
     await srv.close();
   });
 
-  it("serves the debug page at /", async () => {
-    const srv = await startServer(cfgFor(), async () => null);
-    const res = await fetch(`http://127.0.0.1:${srv.port}/`);
-    expect(res.headers.get("content-type")).toContain("text/html");
-    expect(await res.text()).toContain("<h1>");
-    expect((await fetch(`http://127.0.0.1:${srv.port}/nope`)).status).toBe(404);
+  // Behind a tunnel, cloudflared connects over loopback — narrowing bindHost is
+  // what makes the tunnel the ONLY way in.
+  it("binds only where bindHost says", async () => {
+    const srv = await startServer({ ...cfgFor(), bindHost: "127.0.0.1" }, async () => null);
+
+    expect((await fetch(`http://127.0.0.1:${srv.port}/`)).status).toBe(200);
+    // A different address on the same machine is now refused, not answered.
+    await expect(fetch(`http://[::1]:${srv.port}/`)).rejects.toThrow();
+
     await srv.close();
+  });
+
+  it("serves the debug page at /debug, and at / when there is no app build", async () => {
+    // A directory with no index.html is what a checkout that never ran the
+    // export looks like — / must still be something, not a 404.
+    const srv = await startServer(cfgFor(), async () => null, { appDist: mkdtempSync(join(tmpdir(), "wb-nodist-")) });
+    const get = (p: string) => fetch(`http://127.0.0.1:${srv.port}${p}`);
+
+    for (const p of ["/", "/debug"]) {
+      const res = await get(p);
+      expect(res.headers.get("content-type"), p).toContain("text/html");
+      expect(await res.text(), p).toContain("<h1>");
+    }
+    expect((await get("/nope")).status).toBe(404);
+    await srv.close();
+  });
+
+  // The tunnel's whole point: what a phone browser opens at / is the real app,
+  // not the debug page — and a deep link into a client-side route has to boot it
+  // too, or every reload on /files is a 404.
+  describe("the app's web build", () => {
+    const fixture = () => {
+      const dir = mkdtempSync(join(tmpdir(), "wb-dist-"));
+      writeFileSync(join(dir, "index.html"), "<!doctype html><title>workbench app</title>");
+      writeFileSync(join(dir, "settings.html"), "<!doctype html><title>settings route</title>");
+      mkdirSync(join(dir, "_expo"));
+      writeFileSync(join(dir, "_expo", "bundle.js"), "console.log(1)");
+      return dir;
+    };
+
+    it("serves it at /, falls back to index.html for routes, and keeps the daemon's own routes", async () => {
+      const srv = await startServer(cfgFor(), async () => null, { appDist: fixture() });
+      const get = (p: string) => fetch(`http://127.0.0.1:${srv.port}${p}`);
+
+      const root = await get("/");
+      expect(root.headers.get("content-type")).toContain("text/html");
+      expect(await root.text()).toContain("workbench app");
+
+      // Static export writes one html per route; the sibling wins over the fallback.
+      expect(await (await get("/settings")).text()).toContain("settings route");
+      // …and a route it did not write still boots the app (SPA fallback).
+      expect(await (await get("/files")).text()).toContain("workbench app");
+
+      const js = await get("/_expo/bundle.js");
+      expect(js.headers.get("content-type")).toContain("application/javascript");
+      expect(await js.text()).toBe("console.log(1)");
+      // An asset request is NOT a route: a missing bundle must stay a 404 rather
+      // than become index.html served as javascript.
+      expect((await get("/_expo/gone.js")).status).toBe(404);
+
+      // The daemon's own pages take precedence over anything in the export.
+      expect(await (await get("/debug")).text()).toContain("<h1>");
+      expect(await (await get("/terminal")).text()).toContain("xterm");
+      expect((await get("/vendor/xterm.js")).status).toBe(200);
+      await srv.close();
+    });
+
+    it("refuses to serve anything outside the build directory", async () => {
+      const srv = await startServer(cfgFor(), async () => null, { appDist: fixture() });
+      // Both spellings: the raw path, and the one that only becomes a traversal
+      // after decoding — the check runs on the decoded, resolved path.
+      for (const p of ["/../../package.json", "/..%2f..%2fpackage.json", "/%2e%2e/%2e%2e/package.json"]) {
+        const res = await fetch(`http://127.0.0.1:${srv.port}${p}`);
+        expect([200, 404], p).toContain(res.status);
+        expect(await res.text(), p).not.toContain("workbench-daemon");
+      }
+      await srv.close();
+    });
   });
 
   it("serves the terminal page and the vendored xterm assets", async () => {

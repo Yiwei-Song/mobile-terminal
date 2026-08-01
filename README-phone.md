@@ -173,6 +173,60 @@ the auto-logon steps — it does **not** touch your password.
 
 ---
 
+## From anywhere, in a phone browser (Cloudflare Tunnel)
+
+No app install, no Expo Go, no VPN on the phone — and it works where Tailscale is blocked.
+The daemon serves the real app UI at `/`, and `cloudflared` puts that on a public https URL.
+
+**PC, once:** [download `cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
+(a single .exe) and build the web app:
+
+```
+cd daemon
+npm run build:app      # expo export --platform web -> app/dist
+```
+
+Rerun `npm run build:app` after any change to the app — the daemon serves the build, not the
+source.
+
+**Every time, three terminals (or two + the tray):**
+
+```
+cd daemon && npm run dev                       # 1. the daemon (prints the token)
+cloudflared tunnel --url http://localhost:8790  # 2. prints https://<random>.trycloudflare.com
+```
+
+Open that `https://…trycloudflare.com` URL in the phone browser. The pair screen sees it was
+served by the daemon, so there is **no host or port to type** — paste the token the daemon
+printed and tap Connect.
+
+- The URL is **new every restart** of `cloudflared` (a free quick tunnel), and the browser
+  keeps the token per-URL, so a restart means pasting the token again. A named tunnel on your
+  own domain keeps one address.
+- Anyone with the URL **and** the token is in. The URL alone gets a login screen; the token is
+  the secret — don't paste it anywhere else.
+- The daemon also lives at `/debug` (raw protocol page) and `/terminal` (the xterm page the
+  app embeds).
+
+**Lock it down (recommended while tunnelling).** `cloudflared` connects over loopback, so the
+daemon does not need to be on the network at all. In `%APPDATA%\workbench\config.json`:
+
+```json
+{ "bindHost": "::1" }
+```
+
+…and point the tunnel at that exact address, because `localhost` may resolve to the IPv4 one
+the daemon no longer answers on:
+
+```
+cloudflared tunnel --url http://[::1]:8790
+```
+
+Then the tunnel is the only way in — the LAN and the tailnet stop reaching it, so drop this
+line again when you go back to pairing over wifi. (Default is `"::"`: everything.)
+
+---
+
 ## Known limits (right now)
 
 - **Claude sessions only.** Codex is coming later.

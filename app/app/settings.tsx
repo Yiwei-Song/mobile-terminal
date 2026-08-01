@@ -12,7 +12,7 @@ import { MonoText } from "../src/components/MonoText";
 import { Notice } from "../src/components/Notice";
 import { Screen } from "../src/components/Screen";
 import { Text } from "../src/components/Text";
-import { clearPairing, loadPairing, webInsecureStorage, type Pairing } from "../src/lib/pairing";
+import { clearPairing, loadPairing, pairingLabel, webInsecureStorage, type Pairing } from "../src/lib/pairing";
 import { useWorkbench } from "../src/lib/store";
 import { color, icon as iconSize, opacity, space, stroke } from "../src/theme";
 
@@ -110,7 +110,7 @@ export default function Settings() {
                   Server
                 </Text>
                 <MonoText color="text" style={styles.value}>
-                  {pairing === null ? "not paired" : `${pairing.host}:${pairing.port}`}
+                  {pairing === null ? "not paired" : pairingLabel(pairing)}
                 </MonoText>
                 <Text variant="sub" color="textMut">
                   Tap to scan a new QR or edit the address.

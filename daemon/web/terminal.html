@@ -95,7 +95,9 @@
   // This page is served BY the daemon, so its own origin is the daemon's — the
   // host never gets to name the WS destination. A config message that could
   // point elsewhere would be a way to post the token to an attacker's socket.
-  const WS_URL = "ws://" + location.host + "/ws";
+  // Scheme follows the page's: over an https tunnel a hardcoded ws:// is mixed
+  // content, which the browser blocks outright and the terminal never connects.
+  const WS_URL = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws";
 
   function connect(c) {
     cfg = c;

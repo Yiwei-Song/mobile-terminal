@@ -130,7 +130,7 @@ if (tailnet) {
 console.log(`LAN (same wifi only): ${hostPort(ip)}`);
 
 console.log(
-  `Workbench daemon on ws://${hostPort(host)}/ws  (debug page: http://${hostPort(host)}/, terminal: http://${hostPort(host)}/terminal)`,
+  `Workbench daemon on ws://${hostPort(host)}/ws  (app: http://${hostPort(host)}/, debug page: /debug, terminal: /terminal)`,
 );
 console.log("Scan to pair:");
 qrcode.generate(JSON.stringify({ host, port: srv.port, token: cfg.token }), { small: true });
