@@ -14,13 +14,17 @@ const ES_CONTINUOUS = 0x80000000; // keep the state until the next call / thread
 const ES_SYSTEM_REQUIRED = 0x00000001; // system stays awake (no sleep)
 const ES_DISPLAY_REQUIRED = 0x00000002; // display stays on too
 
-// PowerShell that P/Invokes SetThreadExecutionState(mask) then blocks forever.
+// PowerShell that P/Invokes SetThreadExecutionState(mask) then blocks on stdin.
 // While this child lives the flag holds; killing it lets the thread exit and
-// the flag clears (ES_CONTINUOUS is not sticky past the process).
+// the flag clears (ES_CONTINUOUS is not sticky past the process). Blocking on
+// ReadToEnd (not an infinite sleep) means that when the daemon dies for ANY
+// reason its stdin pipe closes, PowerShell hits EOF, and the child exits on its
+// own — so the machine can sleep again instead of being pinned awake by an
+// orphan. (Killing the child explicitly still works too.)
 const keepAwakeScript = (mask: number): string =>
   `Add-Type -Name P -Namespace W -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint e);'; ` +
   `[W.P]::SetThreadExecutionState(${mask >>> 0}); ` +
-  `while($true){Start-Sleep -Seconds 3600}`;
+  `[Console]::In.ReadToEnd() | Out-Null`;
 
 // ponytail: a single PS child, not a pool — one host, one keep-awake flag.
 export class KeepAwake {
@@ -31,15 +35,20 @@ export class KeepAwake {
     if (this.child) return; // idempotent: already holding the flag
     const mask =
       ES_CONTINUOUS | ES_SYSTEM_REQUIRED | (displayToo ? ES_DISPLAY_REQUIRED : 0);
-    this.child = this.deps.spawn(
+    // stdin is an explicit pipe so the script's ReadToEnd blocks on it and hits
+    // EOF when we die; stdout/stderr ignored (the script prints nothing).
+    const child = this.deps.spawn(
       "powershell",
       ["-NoProfile", "-Command", keepAwakeScript(mask)],
-      { windowsHide: true },
+      { windowsHide: true, stdio: ["pipe", "ignore", "ignore"] },
     );
+    this.child = child;
     // If the child dies on its own (crash, killed elsewhere), drop the ref so
-    // `active` is honest and a later start() can respawn.
-    this.child.on("exit", () => {
-      this.child = null;
+    // `active` is honest and a later start() can respawn. Guard on identity: a
+    // stop()→start() can replace this.child before this handler fires, and the
+    // dead child's late exit must not null out its live successor.
+    child.on("exit", () => {
+      if (this.child === child) this.child = null;
     });
   }
 

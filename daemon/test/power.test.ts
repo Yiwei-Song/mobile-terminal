@@ -6,7 +6,7 @@ import type { PowerDeps } from "../src/power.js";
 // with just the kill()/on()/pid surface KeepAwake touches. `on("exit")` handlers
 // are stored so a test can simulate the child dying on its own.
 function fakeSpawn() {
-  const calls: { cmd: string; args: string[] }[] = [];
+  const calls: { cmd: string; args: string[]; opts: any }[] = [];
   let exitHandler: ((code: number) => void) | null = null;
   let errorHandler: ((err: unknown) => void) | null = null;
   const child = {
@@ -18,8 +18,8 @@ function fakeSpawn() {
       return child;
     },
   };
-  const spawn = ((cmd: string, args: string[]) => {
-    calls.push({ cmd, args });
+  const spawn = ((cmd: string, args: string[], opts: any) => {
+    calls.push({ cmd, args, opts });
     return child;
   }) as unknown as PowerDeps["spawn"];
   return {
@@ -29,6 +29,27 @@ function fakeSpawn() {
     fireExit: (code = 0) => exitHandler?.(code),
     fireError: (err: unknown) => errorHandler?.(err),
   };
+}
+
+// Distinct-child spawn: each call returns its OWN fake child with its own exit
+// handler, so a test can fire the FIRST child's late exit after a second start.
+function fakeMultiSpawn() {
+  const children: { pid: number; kill: ReturnType<typeof vi.fn>; fireExit: (code?: number) => void }[] = [];
+  const spawn = ((_cmd: string, _args: string[]) => {
+    let exitHandler: ((code: number) => void) | null = null;
+    const child: any = {
+      pid: 1000 + children.length,
+      kill: vi.fn(),
+      on: (ev: string, cb: (arg: never) => void) => {
+        if (ev === "exit") exitHandler = cb as (code: number) => void;
+        return child;
+      },
+    };
+    child.fireExit = (code = 0) => exitHandler?.(code);
+    children.push(child);
+    return child;
+  }) as unknown as PowerDeps["spawn"];
+  return { spawn, children };
 }
 
 // Fake exec: never runs a shell — records the command string and invokes the
@@ -57,6 +78,12 @@ describe("KeepAwake", () => {
     expect(script).toContain("SetThreadExecutionState");
     // ES_CONTINUOUS(0x80000000)|ES_SYSTEM_REQUIRED(0x1) = 2147483649
     expect(script).toContain("(2147483649)");
+    // Blocks on stdin EOF (not an infinite sleep) so a dead daemon's closed
+    // stdin pipe lets the child exit and release the flag — no sleep-orphan.
+    expect(script).toContain("[Console]::In.ReadToEnd()");
+    expect(script).not.toContain("Start-Sleep");
+    // stdin must be a real pipe for that EOF to ever arrive.
+    expect(s.calls[0].opts.stdio[0]).toBe("pipe");
     expect(ka.active).toBe(true);
   });
 
@@ -97,6 +124,20 @@ describe("KeepAwake", () => {
     expect(ka.active).toBe(false);
     ka.start(); // can respawn after a self-exit
     expect(s.calls).toHaveLength(2);
+  });
+
+  it("a stale exit from a replaced child does not clear the live child", () => {
+    const s = fakeMultiSpawn();
+    const ka = new KeepAwake(depsWith({ spawn: s.spawn }));
+    ka.start(); // child 0
+    ka.stop(); // kills child 0, ref cleared
+    ka.start(); // child 1 is now the live one
+    // child 0's kill triggers a late exit — with the identity guard it must NOT
+    // null out child 1 (otherwise active would lie while a child holds the flag).
+    s.children[0].fireExit();
+    expect(ka.active).toBe(true);
+    expect(s.children).toHaveLength(2);
+    expect(s.children[1].kill).not.toHaveBeenCalled(); // child 1 intact
   });
 });
 

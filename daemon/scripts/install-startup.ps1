@@ -41,7 +41,18 @@ if (-not $node) { $node = 'node' }
 # schtasks /tr takes ONE string = program + args. Embedded paths may contain
 # spaces, so each is wrapped in escaped quotes (\"...\"). PowerShell forwards the
 # \" sequences to schtasks, which stores: "<node>" "<entry>"
-$tr = '\"' + $node + '\" \"' + $entry + '\"'
+#
+# The scheduled (post-reboot) start is the ONLY start that should lock the
+# screen — nobody is at the desk. So run it through `cmd /c` and set
+# WORKBENCH_LOCK_ON_START=1 first; the daemon reads that env var and locks +
+# pings the phone. A manual `npm run dev` leaves the var unset and never locks.
+# Note: no space before `&&` (`set VAR=1&&`) — a trailing space becomes part of
+# the value ("1 "), which would fail the `=== "1"` check. Every quote is written
+# as \" so PowerShell forwards a real " to schtasks (same convention as before);
+# the stored action is:  cmd /c "set WORKBENCH_LOCK_ON_START=1&& "<node>" "<entry>""
+# which cmd runs by stripping its outer quotes, setting the var, then launching
+# the quoted node + entry.
+$tr = 'cmd /c \"set WORKBENCH_LOCK_ON_START=1&& \"' + $node + '\" \"' + $entry + '\"\"'
 
 Write-Host ""
 Write-Host "Registering scheduled task '$TaskName'..." -ForegroundColor Cyan

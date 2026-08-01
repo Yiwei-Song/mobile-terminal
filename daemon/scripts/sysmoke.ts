@@ -45,15 +45,6 @@ for (let i = 1; i < procs.length; i++) assert.ok(procs[i - 1].cpuPct >= procs[i]
 
 // --- 2. Kill a THROWAWAY process (never a real app) ---
 console.log("\nKill test (throwaway process only):");
-const victim = spawn(process.execPath, ["-e", "setInterval(()=>{}, 1e9)"], { stdio: "ignore" });
-await new Promise<void>((r, rej) => {
-  victim.once("spawn", () => r());
-  victim.once("error", rej);
-});
-const pid = victim.pid!;
-console.log(`  spawned throwaway pid ${pid}`);
-assert.ok(pid > 0 && pid !== process.pid, "sanity: throwaway must have a real pid distinct from us");
-
 const alive = (p: number): boolean => {
   try {
     process.kill(p, 0); // signal 0 = existence probe, doesn't actually signal
@@ -62,20 +53,36 @@ const alive = (p: number): boolean => {
     return (e as NodeJS.ErrnoException).code !== "ESRCH";
   }
 };
-assert.ok(alive(pid), "throwaway should be alive before we kill it");
+const victim = spawn(process.execPath, ["-e", "setInterval(()=>{}, 1e9)"], { stdio: "ignore" });
+// try/finally: if any assert between spawn and killProcess throws, we still kill
+// the victim instead of leaking it. killProcess kills it on the happy path; the
+// finally kill() is then a harmless no-op on an already-dead pid.
+try {
+  await new Promise<void>((r, rej) => {
+    victim.once("spawn", () => r());
+    victim.once("error", rej);
+  });
+  const pid = victim.pid!;
+  console.log(`  spawned throwaway pid ${pid}`);
+  assert.ok(pid > 0 && pid !== process.pid, "sanity: throwaway must have a real pid distinct from us");
 
-const res = await killProcess(pid);
-console.log(`  killProcess(${pid}) -> ${JSON.stringify(res)}`);
-assert.deepStrictEqual(res, { ok: true }, `killProcess should report ok, got ${JSON.stringify(res)}`);
+  assert.ok(alive(pid), "throwaway should be alive before we kill it");
 
-// The OS reaps asynchronously; poll briefly for it to actually go.
-let gone = false;
-for (let i = 0; i < 40 && !gone; i++) {
-  if (!alive(pid)) gone = true;
-  else await new Promise((r) => setTimeout(r, 50));
+  const res = await killProcess(pid);
+  console.log(`  killProcess(${pid}) -> ${JSON.stringify(res)}`);
+  assert.deepStrictEqual(res, { ok: true }, `killProcess should report ok, got ${JSON.stringify(res)}`);
+
+  // The OS reaps asynchronously; poll briefly for it to actually go.
+  let gone = false;
+  for (let i = 0; i < 40 && !gone; i++) {
+    if (!alive(pid)) gone = true;
+    else await new Promise((r) => setTimeout(r, 50));
+  }
+  assert.ok(gone, `throwaway pid ${pid} still alive after killProcess — kill did not kill`);
+  console.log(`  confirmed pid ${pid} is gone (process.kill(pid,0) -> ESRCH)`);
+} finally {
+  victim.kill();
 }
-assert.ok(gone, `throwaway pid ${pid} still alive after killProcess — kill did not kill`);
-console.log(`  confirmed pid ${pid} is gone (process.kill(pid,0) -> ESRCH)`);
 
 // --- Guard still works live: refuses to kill the daemon (self) ---
 const self = await killProcess(process.pid);

@@ -87,6 +87,10 @@ powershell -ExecutionPolicy Bypass -File scripts\install-startup.ps1
 This registers a Task Scheduler job that launches the daemon at logon. It then **prints**
 the auto-logon steps — it does **not** touch your password.
 
+> **Locking is opt-in.** Only the scheduled (post-reboot) start locks the screen — the task
+> sets `WORKBENCH_LOCK_ON_START=1` for exactly that reason. A manual `npm run dev` / `npm run e2e`
+> leaves it unset and **never** locks your dev machine.
+
 **2. Enable auto-logon yourself** (the script walks you through both):
 - **netplwiz** (preferred): `Win+R` → `netplwiz` → uncheck *"Users must enter a user
   name and password"* → Apply. No visible plaintext password.

@@ -6,7 +6,7 @@ import qrcode from "qrcode-terminal";
 import { loadConfig } from "./config.js";
 import { startServer } from "./server.js";
 import { notify, ntfyFor } from "./notify.js";
-import { runBootResume } from "./boot.js";
+import { runBootResume, bootSideEffects } from "./boot.js";
 import { KeepAwake, lockWorkstation } from "./power.js";
 import type { PushEvent } from "./protocol.js";
 import { Manifest } from "./sessions/manifest.js";
@@ -23,6 +23,10 @@ const manifest = new Manifest(cfg.dataDir);
 const powerDeps = { spawn, exec };
 const keepAwake = new KeepAwake(powerDeps);
 keepAwake.start();
+// Belt-and-suspenders: kill the keep-awake child if the daemon exits. The child
+// also self-exits on stdin EOF (its pipe closes when we die), but this covers
+// the clean-exit path synchronously so the machine can sleep again promptly.
+process.on("exit", () => keepAwake.stop());
 
 // ponytail: single-push-ref; event bus if the daemon grows. The registry is
 // built before the server (it *is* the server's handler), so its push starts as
@@ -46,11 +50,16 @@ const registry = new Registry(
 );
 
 // After the manifest is normalized and before any client can read it: clear
-// stale running rows, lock the screen (privacy), and tell the phone we're back.
-runBootResume(manifest, {
-  lock: () => void lockWorkstation(powerDeps),
-  notify: (title, body) => notify(cfg.ntfyTopic, title, body),
-});
+// stale running rows, and — ONLY for the scheduled post-reboot start
+// (WORKBENCH_LOCK_ON_START=1, nobody at the desk) — lock the screen (privacy)
+// and tell the phone we're back. A manual start normalizes but never locks.
+runBootResume(
+  manifest,
+  bootSideEffects(process.env["WORKBENCH_LOCK_ON_START"] === "1", {
+    lock: () => void lockWorkstation(powerDeps),
+    notify: (title, body) => notify(cfg.ntfyTopic, title, body),
+  }),
+);
 
 const srv = await startServer(cfg, (method, params, push) => {
   pushRef = push;
