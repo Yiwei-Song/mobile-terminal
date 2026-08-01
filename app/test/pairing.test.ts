@@ -101,6 +101,10 @@ describe("sameOrigin", () => {
     expect(sameOrigin("http://192.168.1.24:8790.evil.example/x", O)).toBe(false);
     expect(sameOrigin("https://192.168.1.24:8790/terminal", O)).toBe(false);
     expect(sameOrigin("javascript:alert(1)", O)).toBe(false);
+    // Only "/", "?" and "#" end an origin. Two separators a URL parser accepts
+    // and a naive prefix check would not: userinfo, and Windows' backslash.
+    expect(sameOrigin("http://192.168.1.24:8790@evil.example/", O)).toBe(false);
+    expect(sameOrigin("http://192.168.1.24:8790\\evil", O)).toBe(false);
   });
 });
 

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { router, useFocusEffect } from "expo-router";
+import * as Clipboard from "expo-clipboard";
 import {
   ArrowDown,
   ArrowLeft as ArrowLeftIcon,
   ArrowRight,
   ArrowUp,
+  ClipboardPaste,
   Plus,
   ShieldAlert,
   TerminalSquare,
@@ -292,6 +294,15 @@ function KeyRow({
   return (
     <View style={styles.keyRow}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.keys} keyboardShouldPersistTaps="always">
+        {/* First, because it is the reason a phone terminal is usable at all:
+            tokens, paths and commands are pasted, not typed. Same path as every
+            other key — the clipboard text is just a longer "keystroke". */}
+        <Key
+          label="Paste"
+          icon={ClipboardPaste}
+          disabled={disabled}
+          onPress={() => void Clipboard.getStringAsync().then((t) => t !== "" && onKey(t)).catch(() => {})}
+        />
         <Key label="Esc" disabled={disabled} onPress={() => onKey("\x1b")} />
         <Key label="Tab" disabled={disabled} onPress={() => onKey("\t")} />
         {/* Sticky: armed here, applied by the page to the next character the

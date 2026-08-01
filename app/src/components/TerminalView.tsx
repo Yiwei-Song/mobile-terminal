@@ -37,7 +37,13 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(functi
       // The token is in this frame. A navigation off the daemon's origin (a link
       // in output, a redirect) would carry it somewhere else — refuse it.
       onShouldStartLoadWithRequest={(r) => sameOrigin(r.url, origin)}
-      onLoadEnd={handshake}
+      // …and the token post is gated on the URL that actually loaded, not on
+      // that interception having worked: RNCWebView's Android client allows a
+      // navigation after a 250ms timeout, and does not route POSTs through it
+      // at all. Whatever loaded, only the daemon's own page gets the token.
+      onLoadEnd={(e) => {
+        if (sameOrigin(e.nativeEvent.url, origin)) handshake();
+      }}
       onMessage={(e) => {
         const m = parseHostMessage(e.nativeEvent.data);
         if (m?.type === "ready") handshake();
