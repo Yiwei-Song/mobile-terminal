@@ -116,7 +116,16 @@ export const parsePairing = (raw: string | null): Pairing | null => {
 };
 
 export async function loadPairing(): Promise<Pairing | null> {
-  return parsePairing(webInsecureStorage ? localStorage.getItem(KEY) : await SecureStore.getItemAsync(KEY));
+  const stored = parsePairing(webInsecureStorage ? localStorage.getItem(KEY) : await SecureStore.getItemAsync(KEY));
+  if (stored === null) return null;
+  // A page served BY a daemon is talking to that daemon, whatever storage
+  // remembers. Without this, a pairing saved on the LAN (host:port, no origin)
+  // survives into a tunnel session and the app keeps dialling an address that
+  // only ever existed on the other side of the world. The token is the only
+  // part of a stored pairing worth keeping once the origin can speak for itself.
+  const served = servedOrigin();
+  if (served !== null && stored.origin !== served) return sameOriginPairing(stored.token);
+  return stored;
 }
 
 export async function savePairing(p: Pairing): Promise<void> {
