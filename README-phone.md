@@ -63,6 +63,75 @@ Notifications are generic ("Approval needed") — no commands or paths leave you
 
 ---
 
+## Terminal
+
+A **real PowerShell on your PC**, on your phone.
+
+1. Tap **Terminal** → type a folder (or leave it blank for the daemon's own) → **New terminal**.
+2. The key row above the keyboard has what the soft keyboard buries:
+   **Paste · Esc · Tab · Ctrl · ↑ ↓ ← → · / | - ~**
+3. **Ctrl is sticky** — tap it, then tap the next character. `Ctrl` then `C` = Ctrl-C.
+4. **Terminals stay alive when you close the app.** Come back and it's still there,
+   scrollback and all.
+5. Killing is **explicit** — the red **Kill** pill, with a confirm. Nothing dies on its own.
+
+---
+
+## Files & changes
+
+**Read-only.** The agents edit; the phone reviews.
+
+1. **What you can browse:** the cwd of every session you've started, plus anything you list
+   under `fileRoots` in **`%APPDATA%\workbench\config.json`**:
+   ```json
+   { "token": "...", "port": 8790, "ntfyTopic": null,
+     "fileRoots": ["D:\\projects", "D:\\Mobile-access"] }
+   ```
+   Backslashes are doubled — it's JSON. Restart the daemon after editing.
+2. **Reading:** tap a folder to descend, a file to read it. Line numbers, no wrapping —
+   long lines scroll sideways.
+3. **Markdown** opens **rendered**; the **Raw** button in the header flips it back.
+4. **Diffs:** the **Changes (N) on \<branch\>** button at the top of a git folder, or the
+   **Changes** action on a session. Per-file hunks, `+`/`−` counts, exactly what
+   `git diff` says.
+
+---
+
+## Preview
+
+1. Tap **Preview** — it lists **everything listening on your PC**, with the process that owns it.
+2. **Dev servers first.** Windows' own plumbing (RPC, SMB, WinRM, the ephemeral range) is
+   demoted behind **Show all ports (N more)** — one tap, nothing is hidden.
+3. Tap a port to open it in a phone-sized frame, with back / forward / reload.
+4. The **open-in-external** button hands the URL to your phone's browser instead.
+
+---
+
+## Dev tools
+
+Long-running services you can start and stop from the couch: a docker stack, a vite server,
+a headless-browser server.
+
+1. Write **`%APPDATA%\workbench\tools.json`** — an array of `{name, command, args, cwd, port}`
+   (`args`, `cwd` and `port` are optional):
+   ```json
+   [
+     { "name": "web dev server", "command": "npm", "args": ["run", "dev"],
+       "cwd": "D:\\projects\\web-dashboard", "port": 5173 },
+     { "name": "docker", "command": "docker", "args": ["compose", "up", "-d"],
+       "cwd": "D:\\projects\\api-server", "port": 5432 }
+   ]
+   ```
+   Full example: `daemon/tools.example.json`.
+2. **Args go through a shell and are NOT quoted for you.** An arg with a space splits in two;
+   one with `& | >` splits the command. Quote it yourself:
+   `"args": ["--dir", "\"C:\\Program Files\\x\""]`.
+3. **Read once, at daemon startup.** Edit the file → **restart the daemon**.
+4. In the app: **Tools** → **Start**. The row flips to **Running** with its port. **Stop** kills
+   it and everything it started, after a confirm.
+
+---
+
 ## Remote reboot & always-on
 
 Want the PC to survive a reboot and come back on its own — restarted from the couch,
@@ -107,6 +176,8 @@ the auto-logon steps — it does **not** touch your password.
 ## Known limits (right now)
 
 - **Claude sessions only.** Codex is coming later.
+- **Files are read-only** — the agents edit, the phone reviews. No upload, no download.
+- **`tools.json` is read once, at daemon startup.** Restart after editing it.
 - **PC must stay awake** with the daemon running.
 - **Camera QR** needs camera permission (Expo Go asks the first time).
 - **Expo Go is dev mode** — fine for daily use, but it's a sandbox. An installable APK is the
