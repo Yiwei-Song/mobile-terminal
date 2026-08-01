@@ -5,7 +5,8 @@
   "private": true,
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
+    "android": "expo run:android",
+    "build:apk": "expo prebuild -p android --no-install && cd android && gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "test": "tsc --noEmit && vitest run"

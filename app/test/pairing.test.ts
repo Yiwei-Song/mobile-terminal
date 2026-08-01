@@ -178,6 +178,66 @@ describe("same-origin pairing", () => {
   });
 });
 
+// The tunnel case on native: no page origin to inherit, so the URL is typed
+// (or pasted) into the pair screen's host field instead.
+describe("originPairing", () => {
+  it("builds a wss origin pairing from a pasted tunnel URL", async () => {
+    const { originPairing, pairingUrl, daemonOrigin, pairingLabel } = await importFor("android");
+    for (const typed of [
+      "https://xyz.trycloudflare.com",
+      "https://xyz.trycloudflare.com/",
+      "  HTTPS://XYZ.trycloudflare.com  ",
+      "https://xyz.trycloudflare.com:443", // default port reads back portless
+    ]) {
+      const p = originPairing(typed, "tok");
+      expect(p, typed).toEqual({ host: "xyz.trycloudflare.com", port: 443, token: "tok", origin: "https://xyz.trycloudflare.com" });
+      expect(pairingUrl(p!)).toBe("wss://xyz.trycloudflare.com/ws");
+      expect(daemonOrigin(p!)).toBe("https://xyz.trycloudflare.com");
+      expect(pairingLabel(p!)).toBe("https://xyz.trycloudflare.com");
+    }
+  });
+
+  it("keeps an explicit non-default port, and handles bracketed IPv6", async () => {
+    const { originPairing, pairingUrl } = await importFor("android");
+
+    const p = originPairing("http://192.168.1.24:8790", "tok")!;
+    expect(p).toEqual({ host: "192.168.1.24", port: 8790, token: "tok", origin: "http://192.168.1.24:8790" });
+    expect(pairingUrl(p)).toBe("ws://192.168.1.24:8790/ws");
+
+    const v6 = originPairing("http://[fd7a::1]:8790", "tok")!;
+    expect(v6.host).toBe("fd7a::1");
+    expect(v6.origin).toBe("http://[fd7a::1]:8790");
+    expect(pairingUrl(v6)).toBe("ws://[fd7a::1]:8790/ws");
+  });
+
+  it("refuses anything that is not exactly an http(s) origin", async () => {
+    const { originPairing } = await importFor("android");
+    for (const bad of [
+      "https://xyz.trycloudflare.com/path",
+      "https://xyz.trycloudflare.com?q=1",
+      "https://xyz.trycloudflare.com#top",
+      "https://user@xyz.trycloudflare.com", // userinfo smuggles a fake host
+      "https://xyz.trycloudflare.com\\evil",
+      "wss://xyz.trycloudflare.com",
+      "javascript:alert(1)",
+      "xyz.trycloudflare.com",
+      "https://",
+      "https://xyz.trycloudflare.com:0",
+      "https://xyz.trycloudflare.com:99999",
+      "",
+    ])
+      expect(originPairing(bad, "tok"), bad).toBeNull();
+  });
+
+  it("survives the storage round-trip with its origin intact", async () => {
+    const { originPairing, savePairing, loadPairing } = await importFor("android");
+    keychain.clear();
+    const p = originPairing("https://xyz.trycloudflare.com", "tok")!;
+    await savePairing(p);
+    expect(await loadPairing()).toEqual(p);
+  });
+});
+
 // The terminal WebView holds the daemon token, so this predicate is what stops
 // a navigation carrying it off the machine it belongs to.
 describe("sameOrigin", () => {

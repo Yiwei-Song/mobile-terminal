@@ -62,6 +62,30 @@ export const servedOrigin = (): string | null => {
 };
 
 /**
+ * A pairing typed as a URL — the tunnel case on native, where the daemon lives
+ * at an https origin (wss, no port) that host+port fields cannot express.
+ * Accepts exactly a scheme and an authority, forgiving one trailing "/";
+ * anything with a path, query or userinfo is not an origin and is refused
+ * rather than guessed at. A default port is dropped so the origin compares
+ * equal to what a browser or WebView reports for the same address.
+ */
+export const originPairing = (input: string, token: string): Pairing | null => {
+  const m = /^(https?):\/\/(\[[0-9a-f:.]+\]|[^\s:/?#@\\[\]]+)(?::(\d{1,5}))?\/?$/i.exec(input.trim());
+  if (m === null) return null;
+  const scheme = m[1].toLowerCase();
+  const host = m[2].toLowerCase();
+  const port = m[3] === undefined ? (scheme === "https" ? 443 : 80) : Number(m[3]);
+  if (port < 1 || port > 65535) return null;
+  const isDefault = port === (scheme === "https" ? 443 : 80);
+  return {
+    host: host.replace(/^\[|\]$/g, ""),
+    port,
+    token,
+    origin: `${scheme}://${host}${isDefault ? "" : `:${port}`}`,
+  };
+};
+
+/**
  * A pairing for the daemon that served this page. The token is the only thing
  * the user has to supply: everything else is where the page came from.
  */

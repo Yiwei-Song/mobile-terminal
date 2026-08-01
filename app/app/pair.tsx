@@ -13,6 +13,7 @@ import { Screen } from "../src/components/Screen";
 import { Text } from "../src/components/Text";
 import {
   loadPairing,
+  originPairing,
   pairingLabel,
   parsePairing,
   sameOriginPairing,
@@ -54,7 +55,8 @@ export default function Pair() {
     if (edit === undefined) return;
     void loadPairing().then((p) => {
       if (p === null) return;
-      setHost(p.host);
+      // An origin pairing reads back as the URL it was typed as.
+      setHost(p.origin ?? p.host);
       setPort(String(p.port));
       setToken(p.token);
     });
@@ -109,12 +111,29 @@ export default function Pair() {
   };
 
   const submitManual = () => {
+    const h = host.trim();
+    // A pasted URL is the tunnel case: the daemon is behind https with no port,
+    // which only an origin pairing can express — ws://tunnel-host:443 is wrong
+    // twice over. The port field is ignored; the URL carries its own.
+    if (/^https?:\/\//i.test(h)) {
+      const p = originPairing(h, token.trim());
+      if (token.trim() === "" || p === null) {
+        setFailure({
+          title: "Check the URL",
+          body: "A daemon URL is just scheme and host — like https://xyz.trycloudflare.com — plus your token.",
+          retry: null,
+        });
+        return;
+      }
+      void submit(p);
+      return;
+    }
     const n = Number(port);
-    if (host.trim() === "" || token.trim() === "" || !Number.isInteger(n) || n < 1 || n > 65535) {
+    if (h === "" || token.trim() === "" || !Number.isInteger(n) || n < 1 || n > 65535) {
       setFailure({ title: "Check the details", body: "Host and token can't be empty, and the port is 1-65535.", retry: null });
       return;
     }
-    void submit({ host: host.trim(), port: n, token: token.trim() });
+    void submit({ host: h, port: n, token: token.trim() });
   };
 
   const startScan = async () => {
@@ -238,7 +257,8 @@ export default function Pair() {
               label="Host"
               value={host}
               onChangeText={setHost}
-              placeholder="e.g. 192.168.1.24"
+              placeholder="192.168.1.24, or https://…trycloudflare.com"
+              hint="Away from home? Paste your tunnel URL here — the port is then ignored."
               keyboardType="url"
               inputMode="url"
               mono
