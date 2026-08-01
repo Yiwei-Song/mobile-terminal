@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ConfigInfo, Metrics, Proc, PushEvent, SessionEvent, SessionRow, SessionStatus } from "@shared/protocol";
+import type { ConfigInfo, Metrics, Proc, PushEvent, SessionEvent, SessionRow, SessionStatus, TermInfo } from "@shared/protocol";
 
 import { WorkbenchClient, type ClientOpts, type ConnState } from "./client";
 
@@ -29,6 +29,9 @@ export interface Workbench {
   processes: Proc[];
   // power.state's answer: the keep-awake hold and eco flag the toggle reflects.
   powerState: { keepAwake: boolean; ecoMode: boolean } | null;
+  // The live terminals. Only the list lives here — the bytes belong to the
+  // WebView, which holds its own socket straight to the daemon.
+  terminals: TermInfo[];
   // Set by the machine.reboot push once a reboot is scheduled: the screen shows a
   // countdown with an Abort while this is non-null. Cleared by abortReboot or a
   // fresh connect — a reboot means the PC is about to drop off anyway.
@@ -54,6 +57,11 @@ export interface Workbench {
   lockMachine(): Promise<void>;
   rebootMachine(delaySec: number): Promise<void>;
   abortReboot(): Promise<void>;
+  refreshTerminals(): Promise<void>;
+  // cols/rows are a placeholder: the WebView resizes the pty to its real fit the
+  // moment it attaches, so the only thing that matters here is that they are legal.
+  createTerminal(cwd: string): Promise<TermInfo>;
+  killTerminal(termId: string): Promise<void>;
   newSession(cwd: string, prompt: string, title?: string): Promise<string>;
   send(sessionId: string, text: string): Promise<void>;
   interrupt(sessionId: string): Promise<void>;
@@ -108,6 +116,7 @@ export const useWorkbench = create<Workbench>((set, get) => ({
   metrics: null,
   processes: [],
   powerState: null,
+  terminals: [],
   rebootPending: null,
   lastError: null,
 
@@ -163,6 +172,7 @@ export const useWorkbench = create<Workbench>((set, get) => ({
       metrics: null,
       processes: [],
       powerState: null,
+      terminals: [],
       rebootPending: null,
       lastError: null,
     });
@@ -339,6 +349,28 @@ export const useWorkbench = create<Workbench>((set, get) => ({
     // Only a real kill changes the list; a refusal leaves it as-is.
     if (r.ok) await get().refreshMetrics().catch(() => {});
     return r;
+  },
+
+  async refreshTerminals() {
+    if (client === null) return;
+    // Not tracked: the list refreshes on focus and after a kill, and a blip on
+    // either is not worth a banner — same reasoning as the automatic re-list.
+    set({ terminals: await client.request<TermInfo[]>("term.list") });
+  },
+
+  async createTerminal(cwd) {
+    const t = await track(must().request<TermInfo>("term.create", { cwd, cols: 80, rows: 24 }));
+    // Append rather than re-list: the screen navigates into it immediately, and
+    // a rejected refresh must not lose a pty that already exists.
+    set({ terminals: [...get().terminals, t] });
+    return t;
+  },
+
+  async killTerminal(termId) {
+    await track(must().request("term.kill", { termId }));
+    // term.exit arrives on the event channel, but this store deliberately ignores
+    // it (it belongs to the WebView's socket), so drop the row here.
+    set({ terminals: get().terminals.filter((t) => t.termId !== termId) });
   },
 
   async refreshPowerState() {

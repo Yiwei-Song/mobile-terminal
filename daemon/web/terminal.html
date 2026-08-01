@@ -75,11 +75,16 @@
     ws.send(JSON.stringify({ type: "req", id, method, params }));
   });
 
+  // This page is served BY the daemon, so its own origin is the daemon's — the
+  // host never gets to name the WS destination. A config message that could
+  // point elsewhere would be a way to post the token to an attacker's socket.
+  const WS_URL = "ws://" + location.host + "/ws";
+
   function connect(c) {
     cfg = c;
     if (ws) { try { ws.close(); } catch {} ws = null; }
-    show("connecting…", c.host + ":" + c.port);
-    const sock = new WebSocket("ws://" + c.host + ":" + c.port + "/ws");
+    show("connecting…", location.host);
+    const sock = new WebSocket(WS_URL);
     ws = sock;
     sock.onopen = () => sock.send(JSON.stringify({ type: "auth", token: c.token }));
     sock.onerror = () => {}; // onclose is the one that decides; an error alone is noise
@@ -132,7 +137,38 @@
     };
   }
 
-  term.onData((d) => { if (termId) call("term.write", { termId, data: d }).catch(() => {}); });
+  // One channel back to whatever is hosting this page: the RN WebView, or the
+  // parent frame in a browser. Only non-secret status ever goes this way.
+  const toHost = (m) => {
+    const s = JSON.stringify(m);
+    if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(s);
+    else if (window.parent !== window) window.parent.postMessage(s, "*");
+  };
+
+  const send = (d) => { if (termId) call("term.write", { termId, data: d }).catch(() => {}); };
+
+  // Sticky Ctrl. The soft keyboard types straight into xterm's hidden textarea,
+  // so the host cannot modify a keystroke on its way past — the page has to be
+  // the one that applies the modifier, and the one that says it was used up.
+  let ctrl = false;
+  const asCtrl = (d) => {
+    if (d.length !== 1) return d;
+    const c = d.toUpperCase().charCodeAt(0);
+    return c >= 64 && c < 128 ? String.fromCharCode(c & 31) : d; // C -> \x03
+  };
+  window.wbCtrl = (on) => { ctrl = !!on; term.focus(); };
+  term.onData((d) => {
+    // Only a single typed character uses the modifier up. onData also carries
+    // escape sequences the user never pressed — focus in/out reports, arrows, a
+    // paste — and arming Ctrl focuses the terminal, so without this guard the
+    // focus report it triggers would consume the modifier before the letter.
+    if (ctrl && d.length === 1) { ctrl = false; toHost({ type: "ctrl", on: false }); d = asCtrl(d); }
+    send(d);
+  });
+  // The host's key accessory row (Esc/Tab/arrows/punctuation) reaches the pty
+  // through here. Refocus, or the tap that sent it leaves the hidden textarea
+  // blurred and the phone keyboard slides away.
+  window.wbSend = (d) => { send(d); term.focus(); };
   // ResizeObserver on the box, not window "resize": a page that is laid out at
   // 0x0 (created in a background tab / a WebView not yet on screen) would
   // otherwise size the pty to 2x1 and stay there — the window never resizes,
@@ -150,11 +186,22 @@
 
   // --- host handshake ------------------------------------------------------
   // The token arrives by message, never from the URL: a query string lands in
-  // history, logs and the Referer of anything the page loads.
+  // history, logs and the Referer of anything the page loads. Contract:
+  // {token, termId?, cwd} — no host/port, see WS_URL above.
   const onHostMessage = (ev) => {
     let c = ev.data;
     if (typeof c === "string") { try { c = JSON.parse(c); } catch { return; } }
-    if (!c || typeof c.token !== "string" || !c.host) return; // not for us
+    if (!c) return;
+    // The host's key accessory row. A no-op until a config has authed, so a
+    // frame that never handed over a token cannot type into anything.
+    if (typeof c.send === "string") { window.wbSend(c.send); return; }
+    if (typeof c.ctrl === "boolean") { window.wbCtrl(c.ctrl); return; }
+    if (typeof c.token !== "string") return; // not for us
+    // The host posts the config on both `ready` and onLoadEnd (the ready
+    // handshake is one-shot and would leave the screen dead if the RN bridge
+    // was not installed yet), so a duplicate is expected: first config wins —
+    // reconnecting would create a second pty for the same screen.
+    if (cfg) return;
     connect(c);
   };
   // RN's injectJavaScript dispatches to `window` on iOS and `document` on
@@ -162,8 +209,8 @@
   window.addEventListener("message", onHostMessage);
   document.addEventListener("message", onHostMessage);
 
-  if (window.ReactNativeWebView) {
-    window.ReactNativeWebView.postMessage(JSON.stringify({ type: "ready" }));
+  if (window.ReactNativeWebView || window.parent !== window) {
+    toHost({ type: "ready" });
     show("waiting for the app…", "");
   } else if (new URLSearchParams(location.search).has("dev")) {
     // Desktop debugging only. sessionStorage, so the token survives a reload
@@ -172,7 +219,7 @@
     try { saved = JSON.parse(sessionStorage.getItem("wb.terminal") || "null"); } catch {}
     const token = saved?.token || prompt("daemon token");
     if (token) {
-      const c = { token, host: location.hostname, port: location.port || "80", cwd: saved?.cwd || "." };
+      const c = { token, cwd: saved?.cwd || "." };
       try { sessionStorage.setItem("wb.terminal", JSON.stringify(c)); } catch {}
       connect(c);
     } else {

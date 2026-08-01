@@ -20,6 +20,20 @@ const KEY = "workbench.pairing";
 /** The daemon's WS endpoint. One place, so a path change is one edit. */
 export const pairingUrl = (p: Pick<Pairing, "host" | "port">): string => `ws://${p.host}:${p.port}/ws`;
 
+/** The daemon's HTTP origin — what the terminal WebView is allowed to load. */
+export const daemonOrigin = (p: Pick<Pairing, "host" | "port">): string => `http://${p.host}:${p.port}`;
+
+/**
+ * Is `url` on `origin`? The terminal WebView holds the daemon token, so a page
+ * that navigated anywhere else must not be allowed to load in it — this is the
+ * check that keeps the token pointed at the machine it belongs to.
+ *
+ * Prefix, not `new URL().origin`: RN's URL polyfill has no `origin`. The
+ * separator is what stops `http://10.0.0.5:87` matching `http://10.0.0.5:8787`.
+ */
+export const sameOrigin = (url: string, origin: string): boolean =>
+  url === origin || ["/", "?", "#"].some((sep) => url.startsWith(origin + sep));
+
 // Both sources of a pairing are untrusted input — a partial write, an older app
 // version, a user poking localStorage, or a QR that isn't ours. Anything that is
 // not a whole pairing is "not paired", and that path already ends at the pair screen.

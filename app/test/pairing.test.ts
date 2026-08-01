@@ -79,6 +79,31 @@ describe("pairingUrl", () => {
   });
 });
 
+// The terminal WebView holds the daemon token, so this predicate is what stops
+// a navigation carrying it off the machine it belongs to.
+describe("sameOrigin", () => {
+  const O = "http://192.168.1.24:8790";
+
+  it("accepts the origin itself and any path, query or fragment on it", async () => {
+    const { sameOrigin, daemonOrigin } = await importFor("android");
+    expect(daemonOrigin(P)).toBe(O);
+    expect(sameOrigin(O, O)).toBe(true);
+    expect(sameOrigin(`${O}/terminal`, O)).toBe(true);
+    expect(sameOrigin(`${O}/terminal?dev=1`, O)).toBe(true);
+    expect(sameOrigin(`${O}#top`, O)).toBe(true);
+  });
+
+  it("refuses another origin, including one that only looks like a prefix", async () => {
+    const { sameOrigin } = await importFor("android");
+    expect(sameOrigin("http://evil.example/terminal", O)).toBe(false);
+    // The separator check: a longer port must not pass as the same origin.
+    expect(sameOrigin("http://192.168.1.24:87900/terminal", O)).toBe(false);
+    expect(sameOrigin("http://192.168.1.24:8790.evil.example/x", O)).toBe(false);
+    expect(sameOrigin("https://192.168.1.24:8790/terminal", O)).toBe(false);
+    expect(sameOrigin("javascript:alert(1)", O)).toBe(false);
+  });
+});
+
 // verify against the real daemon over real sockets — a stub server would prove
 // nothing about the three answers the pair screen branches on.
 describe("verify", () => {

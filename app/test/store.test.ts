@@ -350,4 +350,52 @@ describe("workbench store", () => {
 
     await again.close();
   });
+
+  // The bytes never come here — the WebView holds its own socket — so what the
+  // store owns is exactly the list the terminal screen renders.
+  describe("terminals", () => {
+    it("creates, lists and kills against the real daemon", async () => {
+      const d = await startDaemon(idle());
+      await online(d.url, d.token);
+
+      await state().refreshTerminals();
+      expect(state().terminals).toEqual([]);
+
+      const t = await state().createTerminal("C:\\proj");
+      // Optimistic append: the screen navigates into it on the next line.
+      expect(state().terminals).toEqual([t]);
+      expect(t.cwd).toBe("C:\\proj");
+
+      // …and the daemon really has it, not just this store.
+      state().disconnect();
+      await online(d.url, d.token);
+      await state().refreshTerminals();
+      expect(state().terminals.map((x) => x.termId)).toEqual([t.termId]);
+
+      // The row goes on the kill, not on the term.exit push: that event belongs
+      // to the WebView's socket and this store deliberately ignores it. (The
+      // daemon only drops its own entry when the pty really exits, which a fake
+      // pty never does — so the list here is the store's, and that is the one
+      // the screen renders.)
+      await state().killTerminal(t.termId);
+      expect(state().terminals).toEqual([]);
+
+      await d.close();
+    });
+
+    it("reports a failed create and leaves the list alone", async () => {
+      const d = await startDaemon(idle());
+      await online(d.url, d.token);
+      await d.close();
+      await until("offline", () => state().connState === "offline");
+
+      await expect(state().createTerminal("C:\\proj")).rejects.toThrow();
+      expect(state().lastError).toContain("offline");
+      expect(state().terminals).toEqual([]);
+      // The refresh rejects rather than blanking the list on a blip; the screen
+      // is the one that swallows it (no banner for an automatic read).
+      await expect(state().refreshTerminals()).rejects.toThrow();
+      expect(state().terminals).toEqual([]);
+    });
+  });
 });
