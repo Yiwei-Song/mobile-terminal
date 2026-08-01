@@ -10,6 +10,9 @@ export interface Config {
   // Extra trees the phone may browse, on top of the cwds of known sessions.
   // Hand-edited into config.json; absent means "sessions only".
   fileRoots?: string[];
+  // Interface to listen on. Hand-edited into config.json to narrow the daemon
+  // to one address; absent means the dual-stack default (see server.ts).
+  bindHost?: string;
 }
 
 export function loadConfig(dir?: string): Config {

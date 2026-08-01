@@ -9,6 +9,7 @@ import { notify, ntfyFor } from "./notify.js";
 import { runBootResume, bootSideEffects } from "./boot.js";
 import { KeepAwake, lockWorkstation } from "./power.js";
 import { execFileText } from "./files.js";
+import { detectTailscale } from "./tailscale.js";
 import * as pty from "@lydell/node-pty";
 import { PtyManager } from "./term.js";
 import { ToolRunner, loadToolSpecs } from "./tools.js";
@@ -112,10 +113,24 @@ const candidates = Object.entries(networkInterfaces())
   .sort((a, b) => rank(a.address) - rank(b.address));
 const ip = candidates[0]?.address ?? "127.0.0.1";
 
+// …but the LAN address only works on the same wifi. If Tailscale is up, that
+// address works from anywhere, so it is what gets paired.
+const tailnet = await detectTailscale(execFileText);
+const host = tailnet?.host ?? ip;
+// An IPv6 literal in a URL needs brackets — ws://fd7a:…:8790/ws is not a URL.
+const hostPort = (h: string) => `${h.includes(":") ? `[${h}]` : h}:${srv.port}`;
+
 console.log(`LAN candidates (best first): ${candidates.map((c) => `${c.name}=${c.address}`).join("  ") || "(none)"}`);
+if (tailnet) {
+  console.log(`Tailscale (works anywhere): ${hostPort(tailnet.host)}`);
+  if (tailnet.path) console.log(`  peer connections are ${tailnet.path} (relayed = higher latency)`);
+} else {
+  console.log("Tailscale: not detected — pairing with the LAN address (same wifi only)");
+}
+console.log(`LAN (same wifi only): ${hostPort(ip)}`);
 
 console.log(
-  `Workbench daemon on ws://${ip}:${srv.port}/ws  (debug page: http://${ip}:${srv.port}/, terminal: http://${ip}:${srv.port}/terminal)`,
+  `Workbench daemon on ws://${hostPort(host)}/ws  (debug page: http://${hostPort(host)}/, terminal: http://${hostPort(host)}/terminal)`,
 );
 console.log("Scan to pair:");
-qrcode.generate(JSON.stringify({ host: ip, port: srv.port, token: cfg.token }), { small: true });
+qrcode.generate(JSON.stringify({ host, port: srv.port, token: cfg.token }), { small: true });

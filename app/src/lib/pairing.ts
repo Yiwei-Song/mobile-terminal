@@ -17,11 +17,18 @@ export const webInsecureStorage = Platform.OS === "web";
 
 const KEY = "workbench.pairing";
 
+// The daemon pairs over Tailscale by IPv6, and an IPv6 literal in a URL must be
+// bracketed or the ":" of the address is read as the port separator —
+// ws://fd7a:…:8790/ws is not a URL at all. A hostname or IPv4 has no ":" and is
+// left alone; an already-bracketed host is not bracketed twice.
+const authority = (host: string, port: number): string =>
+  `${host.includes(":") && !host.startsWith("[") ? `[${host}]` : host}:${port}`;
+
 /** The daemon's WS endpoint. One place, so a path change is one edit. */
-export const pairingUrl = (p: Pick<Pairing, "host" | "port">): string => `ws://${p.host}:${p.port}/ws`;
+export const pairingUrl = (p: Pick<Pairing, "host" | "port">): string => `ws://${authority(p.host, p.port)}/ws`;
 
 /** The daemon's HTTP origin — what the terminal WebView is allowed to load. */
-export const daemonOrigin = (p: Pick<Pairing, "host" | "port">): string => `http://${p.host}:${p.port}`;
+export const daemonOrigin = (p: Pick<Pairing, "host" | "port">): string => `http://${authority(p.host, p.port)}`;
 
 /**
  * Is `url` on `origin`? The terminal WebView holds the daemon token, so a page

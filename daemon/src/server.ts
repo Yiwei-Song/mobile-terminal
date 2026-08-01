@@ -106,7 +106,12 @@ export function startServer(cfg: Config, handler: RequestHandler, opts: ServerOp
     // Port already taken (a second daemon) must reject, not hang forever on a
     // promise while an uncaught "error" event kills the process.
     http.once("error", reject);
-    http.listen(cfg.port, "0.0.0.0", () => resolve({
+    // "::", not "0.0.0.0": on Windows 0.0.0.0 is IPv4-ONLY, and the address the
+    // phone reaches this machine on from outside the house is the tailnet IPv6
+    // one (Mullvad's always-on firewall blocks Tailscale's IPv4 range but
+    // allows fc00::/7). A dual-stack "::" socket still accepts IPv4 via
+    // IPv4-mapped addresses, so localhost and the LAN keep working unchanged.
+    http.listen(cfg.port, cfg.bindHost ?? "::", () => resolve({
       port: (http.address() as any).port,
       close: () => new Promise<void>((r) => { for (const ws of wss.clients) ws.terminate(); wss.close(); http.close(() => r()); }),
     }));

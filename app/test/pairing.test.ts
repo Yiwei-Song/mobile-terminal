@@ -77,6 +77,23 @@ describe("pairingUrl", () => {
     const { pairingUrl } = await importFor("android");
     expect(pairingUrl(P)).toBe("ws://192.168.1.24:8790/ws");
   });
+
+  // Pairing over Tailscale hands us an IPv6 host, and unbracketed that is not a
+  // URL — the address's own ":" would be read as the port separator.
+  it("brackets an IPv6 host, exactly once, and leaves other hosts alone", async () => {
+    const { pairingUrl, daemonOrigin } = await importFor("android");
+    const v6 = "fd7a:115c:a1e0:ab12:4843:cd96:6250:1a2b";
+    for (const build of [pairingUrl, daemonOrigin]) {
+      expect(build({ host: v6, port: 8790 })).toContain(`[${v6}]:8790`);
+      // A host the user typed with brackets must not become [[…]].
+      expect(build({ host: `[${v6}]`, port: 8790 })).toBe(build({ host: v6, port: 8790 }));
+      expect(build({ host: "192.168.1.24", port: 8790 })).toContain("192.168.1.24:8790");
+      expect(build({ host: "omen16", port: 8790 })).toContain("omen16:8790");
+      expect(build({ host: "::1", port: 8790 })).toContain("[::1]:8790");
+    }
+    expect(pairingUrl({ host: v6, port: 8790 })).toBe(`ws://[${v6}]:8790/ws`);
+    expect(daemonOrigin({ host: v6, port: 8790 })).toBe(`http://[${v6}]:8790`);
+  });
 });
 
 // The terminal WebView holds the daemon token, so this predicate is what stops

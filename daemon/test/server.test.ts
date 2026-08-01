@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { mkdtempSync, readFileSync } from "node:fs";
-import { hostname, tmpdir } from "node:os";
+import { hostname, networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
 import { loadConfig } from "../src/config.js";
@@ -190,6 +190,25 @@ describe("server", () => {
 
     expect(await call("4", "config.set", { ntfyTopic: null })).toMatchObject({ ntfyTopic: null });
     expect(loadConfig(dir).ntfyTopic).toBeNull();
+
+    ws.close();
+    await srv.close();
+  });
+
+  // The phone reaches this machine over the tailnet's IPv6 address, so an
+  // IPv4-only listener ("0.0.0.0") would answer on the LAN and nowhere else.
+  // Every other test in this file already covers the IPv4 side of the same
+  // dual-stack socket by connecting to 127.0.0.1.
+  const hasIPv6 = Object.values(networkInterfaces()).flat().some((a) => a?.address === "::1");
+  it.skipIf(!hasIPv6)("answers on IPv6 loopback too, not just IPv4", async () => {
+    const cfg = cfgFor();
+    const srv = await startServer(cfg, async () => null);
+
+    expect((await fetch(`http://[::1]:${srv.port}/`)).status).toBe(200);
+    const ws = new WebSocket(`ws://[::1]:${srv.port}/ws`);
+    await opened(ws);
+    ws.send(JSON.stringify({ type: "auth", token: cfg.token }));
+    expect((await next(ws)).type).toBe("auth.ok");
 
     ws.close();
     await srv.close();

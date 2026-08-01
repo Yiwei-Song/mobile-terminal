@@ -72,6 +72,10 @@ Write-Host "Done. '$TaskName' will start the daemon at your next logon." -Foregr
 Write-Host "Start it now without logging out:  schtasks /run /tn $TaskName"
 Write-Host "Remove it later:                   schtasks /delete /tn $TaskName /f"
 Write-Host ""
+Write-Host "To reach the daemon from your phone OFF the home wifi (Tailscale), also run:" -ForegroundColor Cyan
+Write-Host "  powershell -ExecutionPolicy Bypass -File `"$(Join-Path $PSScriptRoot 'allow-firewall.ps1')`""
+Write-Host "  (opens the daemon's port inbound, restricted to the Tailscale ranges)"
+Write-Host ""
 
 # ---------------------------------------------------------------------------
 # AUTO-LOGON: printed only. You do this yourself — it involves your password.
