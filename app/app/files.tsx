@@ -79,17 +79,28 @@ export default function Files() {
     }, [fs, params.diff]),
   );
 
+  // Focus alone is not enough: the socket can come up while this screen is the
+  // one on top (a deep link straight to /files, the Reconnect below), and until
+  // it does every read rejects — leaving "No folders yet" for good.
+  useEffect(() => {
+    if (connState === "online") void fs.refreshRoots().catch(() => {});
+  }, [connState, fs]);
+
   // Exactly one root is not a choice — descend into it. More than one and the
   // chips above the list are the picker.
   const activeRoot = root ?? (roots.length === 1 ? roots[0]! : null);
 
+  // connState is a dependency, not a guard (demo mode never goes online): a
+  // listing that rejected while offline is retried when the socket returns, and
+  // roots coming back identical would not move any other dep. `dir !== null`
+  // below is what keeps this from re-listing a folder it already has.
   useEffect(() => {
     if (activeRoot === null || dir !== null || showDiff) return;
     void fs
       .listDir(activeRoot)
       .then(() => void fs.loadGitStatus(activeRoot))
       .catch(() => {});
-  }, [activeRoot, dir, showDiff, fs]);
+  }, [activeRoot, dir, showDiff, fs, connState]);
 
   const openDir = (path: string) => {
     setViewing(null);

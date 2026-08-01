@@ -351,6 +351,33 @@ describe("workbench store", () => {
     await again.close();
   });
 
+  // What deep-linking to /files while the socket is still coming up does: the
+  // first read rejects, the screen swallows it, and nothing but a second read on
+  // connState=online can fill the list — the effect files.tsx now has.
+  it("re-reads the file roots after one failed while offline", async () => {
+    const d = await startDaemon(idle());
+    await online(d.url, d.token);
+    // A session's cwd is a root, so the daemon has one to answer with.
+    await state().newSession("C:\\proj", "gives the tree a root");
+    await state().refreshRoots();
+    const roots = state().roots;
+    expect(roots).toHaveLength(1);
+
+    await d.close();
+    await until("offline", () => state().connState === "offline");
+    // The screen mounted with nothing — this is the empty state the bug stuck on.
+    useWorkbench.setState({ roots: [] });
+    await expect(state().refreshRoots()).rejects.toThrow();
+    expect(state().roots).toEqual([]);
+
+    const again = await startDaemon(idle(), { dir: d.dir, port: d.port });
+    await until("back online", () => state().connState === "online");
+    await state().refreshRoots();
+    expect(state().roots).toEqual(roots);
+
+    await again.close();
+  });
+
   // The bytes never come here — the WebView holds its own socket — so what the
   // store owns is exactly the list the terminal screen renders.
   describe("terminals", () => {

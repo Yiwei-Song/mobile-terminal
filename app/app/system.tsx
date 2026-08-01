@@ -76,6 +76,13 @@ export default function System() {
     }, [refreshMetrics, refreshPowerState]),
   );
 
+  // Metrics have the 3s tick to heal them; the power state is read once, so a
+  // focus that landed while the socket was still coming up would leave the
+  // Keep awake toggle showing "off" for a hold that is actually on.
+  useEffect(() => {
+    if (connState === "online") void refreshPowerState().catch(() => {});
+  }, [connState, refreshPowerState]);
+
   // A fresh metrics object each poll, so this fires on every tick (even a steady
   // cpu) — the sparkline advances at a constant rate rather than only on change.
   useEffect(() => {
