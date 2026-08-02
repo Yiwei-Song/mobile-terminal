@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { ConfigInfo, Entry, Metrics, Port, Proc, PushEvent, SessionEvent, SessionRow, SessionStatus, TermInfo, ToolStatus } from "@shared/protocol";
 
 import { WorkbenchClient, type ClientOpts, type ConnState } from "./client";
+import { loadSeen, saveSeen, type Seen } from "./seen";
 
 // The permission event *is* the approval — a second shape would only be a copy
 // that drifts from protocol.ts.
@@ -20,6 +21,10 @@ export interface Workbench {
   pendingApprovals: Record<string, Approval[] | undefined>;
   connState: ConnState;
   lastSeen: number | undefined;
+  // When the user last LOOKED at each session (ISO), persisted. Unread is
+  // `updatedAt > seenAt[id]` — see groups.ts. Named apart from `lastSeen`
+  // above, which is the socket's last frame and has nothing to do with reading.
+  seenAt: Seen;
   // config.get's answer: hostname + version are what the header shows, and the
   // ntfy topic it also carries is what the settings screen will need.
   machine: ConfigInfo | null;
@@ -58,6 +63,8 @@ export interface Workbench {
 
   connect(url: string, token: string, opts?: ClientOpts): void;
   disconnect(): void;
+  /** Mark a session read as of now, and persist it. */
+  markSeen(sessionId: string): void;
   // userInitiated marks the pull-to-refresh path — only that one is worth a
   // banner. The automatic re-list on every reconnect fails all the time by
   // design and reporting it would make the screen shout at a walk out of range.
@@ -139,6 +146,7 @@ export const useWorkbench = create<Workbench>((set, get) => ({
   pendingApprovals: {},
   connState: "offline",
   lastSeen: undefined,
+  seenAt: {},
   machine: null,
   metrics: null,
   processes: [],
@@ -219,6 +227,14 @@ export const useWorkbench = create<Workbench>((set, get) => ({
       rebootPending: null,
       lastError: null,
     });
+  },
+
+  markSeen(sessionId) {
+    // Not cleared by disconnect(): what you have read is the phone's own memory,
+    // not the daemon's state.
+    const seenAt = { ...get().seenAt, [sessionId]: new Date().toISOString() };
+    set({ seenAt });
+    void saveSeen(seenAt);
   },
 
   async refreshSessions(userInitiated) {
@@ -513,6 +529,13 @@ export const useWorkbench = create<Workbench>((set, get) => ({
     set({ rebootPending: null });
   },
 }));
+
+// Read marks are on disk, so hydrate once at start-up rather than making every
+// screen ask. Marks made before storage answers win — the user's tap now is
+// newer than anything the file can hold.
+void loadSeen().then((stored) => {
+  useWorkbench.setState({ seenAt: { ...stored, ...useWorkbench.getState().seenAt } });
+});
 
 // sessions.pending returns one flat list across all sessions; the store keys
 // approvals by session.

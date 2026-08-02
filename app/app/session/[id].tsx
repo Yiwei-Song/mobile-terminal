@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -9,7 +9,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from "react-native";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { ArrowDown, GitCompare, MessageSquare, ShieldAlert, StopCircle, WifiOff } from "lucide-react-native";
 import type { LucideIcon } from "lucide-react-native";
 
@@ -44,6 +44,17 @@ export default function SessionScreen() {
   const send = useWorkbench((s) => s.send);
   const interrupt = useWorkbench((s) => s.interrupt);
   const approve = useWorkbench((s) => s.approve);
+  const markSeen = useWorkbench((s) => s.markSeen);
+
+  // Twice on purpose: on arrival, and again on the way out. Everything that
+  // landed while you were reading is read too — otherwise the list you go back
+  // to shows an unread dot on the conversation you just closed.
+  useFocusEffect(
+    useCallback(() => {
+      markSeen(id);
+      return () => markSeen(id);
+    }, [id, markSeen]),
+  );
 
   const listRef = useRef<FlatList<Item>>(null);
   const [jump, setJump] = useState(false);
