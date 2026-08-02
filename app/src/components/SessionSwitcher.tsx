@@ -53,6 +53,12 @@ export type SessionSwitcherProps = {
  * answered with a spring that carries the release velocity, so an interrupted
  * drag never cuts. `t` runs 0 (gone) to 1 (open) and drives translate, both
  * opacities and the gesture alike — one value, so nothing can disagree.
+ *
+ * Reduce motion does not drop the drag: 1:1 finger tracking is direct
+ * manipulation, not motion (see `motion.ts`), so it stays gated in under the
+ * same accessibility switch as everything else. What changes on release is
+ * the settle — a short fade instead of a velocity spring — and the enter/exit
+ * tweens, which stay opacity-only.
  */
 export function SessionSwitcher({ open, currentId, onClose }: SessionSwitcherProps) {
   const sessions = useWorkbench((s) => s.sessions);
@@ -138,16 +144,22 @@ export function SessionSwitcher({ open, currentId, onClose }: SessionSwitcherPro
         },
         onPanResponderRelease: (_e, g) => {
           const h = heightRef.current;
-          // gestureState.vy is px/ms and positive downward; Animated wants the
-          // value's own units per second, and down means t decreasing.
-          const velocity = h === 0 ? 0 : (-g.vy * 1000) / h;
           const gone = g.vy > FLICK || cur.current < 1 - DISMISS_AT;
-          Animated.spring(t, {
-            toValue: gone ? 0 : 1,
-            velocity,
-            ...SPRING,
-            useNativeDriver: true,
-          }).start(({ finished }) => {
+          const toValue = gone ? 0 : 1;
+          // Reduce motion: the finger tracked 1:1 same as always (that part is
+          // not motion), but letting go settles with a short fade rather than a
+          // spring carrying the release velocity.
+          const settle = reduced
+            ? Animated.timing(t, { toValue, duration: motion.fast, easing: easing.out, useNativeDriver: true })
+            : Animated.spring(t, {
+                toValue,
+                // gestureState.vy is px/ms and positive downward; Animated wants
+                // the value's own units per second, and down means t decreasing.
+                velocity: h === 0 ? 0 : (-g.vy * 1000) / h,
+                ...SPRING,
+                useNativeDriver: true,
+              });
+          settle.start(({ finished }) => {
             if (!finished || !gone) return;
             selfClosed.current = true;
             setMounted(false);
@@ -158,7 +170,7 @@ export function SessionSwitcher({ open, currentId, onClose }: SessionSwitcherPro
           Animated.spring(t, { toValue: 1, ...SPRING, useNativeDriver: true }).start();
         },
       }),
-    [t],
+    [t, reduced],
   );
 
   // needsYou, then working, then recent — the list screen's own order, and the
@@ -232,7 +244,7 @@ export function SessionSwitcher({ open, currentId, onClose }: SessionSwitcherPro
                 },
           ]}
         >
-          <View {...(reduced ? {} : pan.panHandlers)}>
+          <View {...pan.panHandlers}>
             <View style={styles.handle} />
             <View style={styles.head}>
               <Text variant="h2">Switch session</Text>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Animated, Pressable, ScrollView, StyleSheet, View } from "react-native";
-import { Folder, Terminal } from "lucide-react-native";
+import { FileText, Folder, Pencil, Terminal, Wrench } from "lucide-react-native";
+import type { LucideIcon } from "lucide-react-native";
 
 import { cwdTail } from "../lib/format";
 import { useReducedMotion, usePressScale } from "../lib/motion";
@@ -10,6 +11,17 @@ import { color, easing, icon as iconSize, motion, opacity, radius, space, stroke
 import { Card } from "./Card";
 import { MonoText } from "./MonoText";
 import { Text } from "./Text";
+
+// Which glyph reads a tool at a glance. Substring match on the raw tool name
+// (same forgiving spirit as `toolLabel`) so an unmapped-but-recognizable name
+// still gets the right icon instead of always showing the terminal.
+const iconForTool = (name: string): LucideIcon => {
+  const n = name.toLowerCase();
+  if (n.includes("bash") || n.includes("command") || n.includes("shell")) return Terminal;
+  if (n.includes("edit") || n.includes("write")) return Pencil;
+  if (n.includes("read")) return FileText;
+  return Wrench;
+};
 
 // Journey principle 2: approval is the hero. Full context (tool, command, cwd)
 // and two big thumb-reachable pills — Deny left, Allow right — pinned above
@@ -55,11 +67,13 @@ export function ApprovalCard({
     transform: reduced ? [] : [{ scale: appear.interpolate({ inputRange: [0, 1], outputRange: [0.97, 1] }) }],
   };
 
+  const ToolIcon = iconForTool(approval.toolName);
+
   return (
     <Animated.View style={animStyle}>
       <Card accentEdge="warn" style={styles.card}>
         <View style={styles.head}>
-          <Terminal size={iconSize.sm} color={color.warn} strokeWidth={stroke.icon} />
+          <ToolIcon size={iconSize.sm} color={color.warn} strokeWidth={stroke.icon} />
           {/* `type.label` carries the uppercase: "Run command" -> RUN COMMAND,
               and an unmapped tool name arrives as its own capitalised self. */}
           <Text variant="label" style={styles.title} numberOfLines={1}>

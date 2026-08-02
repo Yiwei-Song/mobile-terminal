@@ -142,7 +142,7 @@ function NavRow({
   );
 }
 
-const DOT = space(2.5);
+const DOT = space(2); // on the 4pt grid — matches the session rows' unread dot scale
 
 const styles = StyleSheet.create({
   scroll: { gap: space(3), paddingTop: space(2), paddingBottom: space(4) },

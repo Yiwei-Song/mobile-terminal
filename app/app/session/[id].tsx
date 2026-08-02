@@ -424,7 +424,9 @@ const styles = StyleSheet.create({
   transcript: { flex: 1 },
   opening: { paddingVertical: space(2), gap: space(1) },
   openingNote: { textAlign: "right" },
-  listContent: { paddingVertical: space(2) },
+  // Inverted list: paddingBottom is the visual TOP (clears the header/attribution
+  // row), paddingTop is the visual BOTTOM (gap above the approval card/composer).
+  listContent: { paddingTop: space(2), paddingBottom: space(4) },
   separator: { height: space(4) },
   jump: {
     position: "absolute",
