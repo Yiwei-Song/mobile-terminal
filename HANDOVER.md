@@ -4,6 +4,32 @@
 
 ---
 
+## 0. STATUS UPDATE — milestones 1 and 2 are done (2026-08-02, later that day)
+
+Sections 1-8 below describe the state *before* the redesign work. What changed since:
+
+**Milestone 1 — real APK (commit `00bec27`).** Built locally, not via EAS (EAS needs an interactive login). Android cmdline-tools + JDK 21 are now permanent on OMEN16; `npm run build:apk` in `app/` rebuilds in ~2 min warm, arm64 only. Fixed a blocker first: native pairing could never reach the Cloudflare tunnel because the pair screen only accepted host+port (always plain `ws://`); `originPairing()` now accepts a pasted `https://` URL.
+
+**Milestone 2 — sessions redesign (`5f84d7c`..`c3513b2`).** Executed as 6 tasks with an independent review each. Benchmark theme (`weaintplastic.com` palette) swapped in verbatim; two tabs **Sessions | Machine** with the terminal and tools demoted off the home screen; session list grouped NEEDS YOU / WORKING / RECENT with unread dots, search and 40ms stagger; conversation screen rebuilt (full-width agent prose with CLAUDE attribution, tinted user blocks, collapsed tool chips, pinned RUN COMMAND approval card with DENY/ALLOW pills, native composer); session switcher sheet on the conversation title with velocity-carrying drag dismiss. Plan: `docs/superpowers/plans/2026-08-02-milestone-2-sessions-redesign.md`.
+
+**The emulator verification rig — the important process change.** Section 6 says "put builds in the owner's hands early and often"; that is still true but was being used as a substitute for the agent verifying its own work. There is now a headless Android emulator on OMEN16 (`AVD "workbench"`, Pixel 7, android-35, WHPX):
+
+```powershell
+$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+& "$env:LOCALAPPDATA\Android\Sdk\emulator\emulator.exe" -avd workbench -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+cd app\android; .\gradlew.bat assembleRelease -PreactNativeArchitectures=x86_64   # x86_64 for the emulator
+& $adb install -r app\android\app\build\outputs\apk\release\app-release.apk
+& $adb reverse tcp:8790 tcp:8790          # then pair the app to 127.0.0.1 with the token from %APPDATA%\workbench\config.json
+& $adb shell input tap X Y ; & $adb shell screencap -p /sdcard/s.png ; & $adb pull /sdcard/s.png
+```
+Build with `EXPO_PUBLIC_DEMO=1` to stage the full demo story (all four session states, a pending approval, a real transcript) for design review.
+
+**It found two ship-blockers that no web render could have**, both now fixed: `Button` with `fill` collapsed to zero height in auto-sized columns (the pair screen's two buttons drew on top of each other — native-only branch), and the release manifest never set `usesCleartextTraffic`, so Android silently blocked *every* plain `ws://` connection — LAN and QR pairing would have failed on the owner's phone at home while only the tunnel worked.
+
+**Next:** milestone 3 (Codex as the second agent + transcript history RPC + prepend-cwd fix), then push notifications, then Machine tab consolidation. Carried minors and deferred items are in `.superpowers/sdd/progress.md`.
+
+---
+
 ## 1. What this is
 
 A phone app that lets the owner run and steer AI coding-agent sessions (Claude Code, later Codex) on their own Windows PC from anywhere — approve what an agent wants to do, read what it changed, start new work, and keep the machine healthy.
