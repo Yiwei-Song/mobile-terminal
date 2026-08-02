@@ -33,6 +33,7 @@ import { Card } from "../../src/components/Card";
 import { Composer } from "../../src/components/Composer";
 import { EmptyState } from "../../src/components/EmptyState";
 import { Screen } from "../../src/components/Screen";
+import { SessionSwitcher } from "../../src/components/SessionSwitcher";
 import { statusMeta } from "../../src/components/StatusChip";
 import { Text } from "../../src/components/Text";
 import { TranscriptItem } from "../../src/components/TranscriptItem";
@@ -74,6 +75,7 @@ export default function SessionScreen() {
   const [jump, setJump] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
   const [menu, setMenu] = useState(false);
+  const [switcher, setSwitcher] = useState(false);
   const insets = useSafeAreaInsets();
 
   // Inverted list wants newest first; the store keeps items oldest-first.
@@ -94,8 +96,9 @@ export default function SessionScreen() {
 
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => setJump(showJump(e.nativeEvent.contentOffset.y));
   const toLatest = () => listRef.current?.scrollToOffset({ offset: 0, animated: true });
-  // Task 5 wires this to the session switcher.
-  const onTitlePress = () => {};
+  // The title is the switcher's handle: which session this is, and the way to
+  // any other one.
+  const onTitlePress = () => setSwitcher(true);
 
   // Every route out of the conversation lives behind the one overflow button:
   // the header's job is what this session is and whether it wants you, and a
@@ -132,6 +135,7 @@ export default function SessionScreen() {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={session?.title ?? "Session"}
+          accessibilityHint="Opens the session switcher"
           onPress={onTitlePress}
           style={styles.titleBtn}
         >
@@ -149,6 +153,8 @@ export default function SessionScreen() {
         )}
         <IconButton icon={MoreHorizontal} label="More actions" onPress={() => setMenu(true)} />
       </View>
+
+      <SessionSwitcher open={switcher} currentId={id} onClose={() => setSwitcher(false)} />
 
       <OverflowMenu
         open={menu}

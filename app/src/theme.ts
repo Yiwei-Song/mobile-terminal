@@ -44,7 +44,8 @@ export const space = (n: number) => n * 4;
  * [override 2] 0 reads unfinished on a dense phone screen; 14 reads bubbly.
  * `pill` is for primary buttons, the FAB and genuinely circular controls.
  */
-export const radius = { card: 4, chip: 2, input: 4, pill: 999 } as const;
+// `sheet` is the switcher's top corners only: a surface arriving from off-screen, not a card.
+export const radius = { card: 4, chip: 2, input: 4, sheet: 12, pill: 999 } as const;
 
 /**
  * [override 4] Two weights. `uiMed` is retained only so existing call sites
