@@ -14,7 +14,7 @@ import type { LucideIcon } from "lucide-react-native";
 
 import { Button } from "../../src/components/Button";
 import { Card } from "../../src/components/Card";
-import { Screen } from "../../src/components/Screen";
+import { Screen, TAB_EDGES } from "../../src/components/Screen";
 import { Text } from "../../src/components/Text";
 import type { ConnState } from "../../src/lib/client";
 import { since } from "../../src/lib/format";
@@ -73,7 +73,7 @@ export default function Machine() {
   };
 
   return (
-    <Screen>
+    <Screen edges={TAB_EDGES}>
       <ScrollView contentContainerStyle={styles.scroll}>
         <Text variant="title">Machine</Text>
 

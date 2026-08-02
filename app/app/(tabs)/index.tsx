@@ -8,7 +8,7 @@ import { Button } from "../../src/components/Button";
 import { Card } from "../../src/components/Card";
 import { EmptyState } from "../../src/components/EmptyState";
 import { Field } from "../../src/components/Field";
-import { Screen } from "../../src/components/Screen";
+import { Screen, TAB_EDGES } from "../../src/components/Screen";
 import { SessionRow } from "../../src/components/SessionRow";
 import { Text } from "../../src/components/Text";
 import type { ConnState } from "../../src/lib/client";
@@ -124,7 +124,7 @@ export default function Home() {
   const canStart = connState === "online" || connState === "connecting";
 
   return (
-    <Screen>
+    <Screen edges={TAB_EDGES}>
       <View style={styles.header}>
         <Text variant="title" style={styles.flex}>
           Sessions

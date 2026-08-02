@@ -1,7 +1,7 @@
 import { Tabs } from "expo-router";
 import { Cog, MessageCircle } from "lucide-react-native";
 
-import { color, icon as iconSize, space, stroke, touch, type as typeScale } from "../../src/theme";
+import { color, icon as iconSize, stroke, type as typeScale } from "../../src/theme";
 
 /**
  * Sessions | Machine. Two tabs, nothing more: Sessions is the product,
@@ -19,11 +19,14 @@ export default function TabsLayout() {
         tabBarActiveTintColor: color.text,
         tabBarInactiveTintColor: color.textMut,
         tabBarLabelStyle: typeScale.micro,
+        // No `height`: React Navigation reads a number as the *total* bar height
+        // and still pads insets.bottom inside it, so a fixed one eats the inset —
+        // fine under gesture nav, 24pt of content box under 3-button nav. Its
+        // default is inset-aware; this bar only says what it looks like.
         tabBarStyle: {
           backgroundColor: color.bg,
           borderTopWidth: stroke.hairline,
           borderTopColor: color.border,
-          height: touch.min + space(6),
         },
       }}
     >

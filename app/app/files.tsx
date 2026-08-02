@@ -32,8 +32,13 @@ export default function Files() {
   // `diff=<cwd>` opens straight into the diff — that is how a session's Changes
   // action arrives, and for it Back means "back to the session", not "to a
   // folder this screen never showed".
-  const params = useLocalSearchParams<{ diff?: string }>();
+  // `cwd=<dir>` opens the browser *in* that folder instead of the roots list —
+  // a session's "Files here". It is the root for this visit: the breadcrumb
+  // walks down from it, and the root chips (if the PC has more than one) are
+  // still the way out of it.
+  const params = useLocalSearchParams<{ diff?: string; cwd?: string }>();
   const fromSession = params.diff !== undefined && params.diff !== "";
+  const scope = params.cwd !== undefined && params.cwd !== "" ? params.cwd : null;
 
   const connState = useWorkbench((s) => s.connState);
   const roots = useWorkbench((s) => s.roots);
@@ -56,7 +61,7 @@ export default function Files() {
     [refreshRoots, listDir, readFile, loadDiff, loadGitStatus],
   );
 
-  const [root, setRoot] = useState<string | null>(null);
+  const [root, setRoot] = useState<string | null>(scope);
   const [viewing, setViewing] = useState<string | null>(null);
   const [showDiff, setShowDiff] = useState(fromSession);
   const [rendered, setRendered] = useState(true);
@@ -89,6 +94,14 @@ export default function Files() {
   // Exactly one root is not a choice — descend into it. More than one and the
   // chips above the list are the picker.
   const activeRoot = root ?? (roots.length === 1 ? roots[0]! : null);
+
+  // `dir` outlives this screen — it is store state, so arriving with a scope
+  // would otherwise render whatever folder the browser was last left in, under
+  // a breadcrumb that no longer describes it. Clearing it hands the listing
+  // below its usual job, retry-when-online and all.
+  useEffect(() => {
+    if (scope !== null) useWorkbench.setState({ dir: null, entries: [] });
+  }, [scope]);
 
   // connState is a dependency, not a guard (demo mode never goes online): a
   // listing that rejected while offline is retried when the socket returns, and
@@ -142,8 +155,10 @@ export default function Files() {
   const back = () => {
     if (viewing !== null) return setViewing(null);
     if (showDiff && !fromSession) return setShowDiff(false);
-    if (!showDiff && viewing === null && dir !== null && roots.length > 1 && dir === activeRoot) {
+    if (!showDiff && viewing === null && dir !== null && roots.length > 1 && dir === activeRoot && scope === null) {
       // At the top of a root with siblings to pick from: back means the picker.
+      // Not when scoped to a session's folder — there Back means the session,
+      // and the root chips are still there for anyone who wants the picker.
       setRoot(null);
       useWorkbench.setState({ dir: null, entries: [] });
       return;
@@ -228,7 +243,7 @@ export default function Files() {
           truncated={fileText?.path === viewing && fileText.truncated}
           rendered={rendered}
         />
-      ) : roots.length === 0 ? (
+      ) : roots.length === 0 && scope === null ? (
         <EmptyState
           icon={FolderOpen}
           title="No folders yet"

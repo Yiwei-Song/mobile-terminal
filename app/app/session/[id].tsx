@@ -115,11 +115,16 @@ export default function SessionScreen() {
             label: "Changes",
             onPress: act(() => router.push({ pathname: "/files", params: { diff: session.cwd } })),
           },
+          // "here" means this session's folder — `cwd` opens the browser in it
+          // rather than on the daemon's roots. Only offered once the session is
+          // in hand: there is no "here" to scope to before that.
+          {
+            icon: Folder,
+            label: "Files here",
+            onPress: act(() => router.push({ pathname: "/files", params: { cwd: session.cwd } })),
+          },
         ]
       : []),
-    // Plain browse: the files screen only takes `diff`, so there is no cwd to
-    // hand it — it opens on the daemon's roots.
-    { icon: Folder, label: "Files here", onPress: act(() => router.push("/files")) },
     { icon: SquareTerminal, label: "Terminal here", onPress: act(() => router.push("/terminal")) },
     ...(status === "running"
       ? [{ icon: StopCircle, label: "Interrupt", tint: "danger" as ColorRole, onPress: act(() => setConfirmStop(true)) }]
