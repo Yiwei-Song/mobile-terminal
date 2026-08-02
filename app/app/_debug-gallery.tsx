@@ -20,7 +20,17 @@ import {
   type TypeVariant,
 } from "../src/theme";
 
-const VARIANTS: TypeVariant[] = ["title", "h2", "body", "sub", "mono"];
+const VARIANTS: TypeVariant[] = [
+  "title",
+  "h2",
+  "strong",
+  "body",
+  "sub",
+  "meta",
+  "label",
+  "micro",
+  "mono",
+];
 const STATUSES: SessionStatus[] = ["waiting_on_user", "running", "idle", "dead"];
 const BUTTONS: ButtonVariant[] = ["primary", "outline", "danger", "ghost"];
 const SWATCHES = Object.keys(color) as ColorRole[];
