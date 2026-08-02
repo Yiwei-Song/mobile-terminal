@@ -3,23 +3,22 @@ import { FlatList, Pressable, RefreshControl, StyleSheet, View } from "react-nat
 import { router, useFocusEffect } from "expo-router";
 import { Plus, ShieldAlert, TerminalSquare, WifiOff, X } from "lucide-react-native";
 
-import { ActionRow } from "../src/components/ActionRow";
-import { Button } from "../src/components/Button";
-import { Card } from "../src/components/Card";
-import { EmptyState } from "../src/components/EmptyState";
-import { MachineBar } from "../src/components/MachineBar";
-import { Screen } from "../src/components/Screen";
-import { SessionRow } from "../src/components/SessionRow";
-import { Text } from "../src/components/Text";
-import type { ConnState } from "../src/lib/client";
-import { demoMode, seedDemo } from "../src/lib/demo";
-import { loadPairing, pairingUrl, type Pairing } from "../src/lib/pairing";
-import { useWorkbench } from "../src/lib/store";
-import { color, icon as iconSize, opacity, space, touch } from "../src/theme";
+import { Button } from "../../src/components/Button";
+import { Card } from "../../src/components/Card";
+import { EmptyState } from "../../src/components/EmptyState";
+import { Screen } from "../../src/components/Screen";
+import { SessionRow } from "../../src/components/SessionRow";
+import { Text } from "../../src/components/Text";
+import type { ConnState } from "../../src/lib/client";
+import { demoMode, seedDemo } from "../../src/lib/demo";
+import { loadPairing, pairingUrl, type Pairing } from "../../src/lib/pairing";
+import { useWorkbench } from "../../src/lib/store";
+import { color, icon as iconSize, opacity, space, touch } from "../../src/theme";
 
 /**
- * Home: "does anything need me?" answered in under a second. The list is the
- * screen — machine bar above it, one FAB below it, nothing else competing.
+ * Sessions tab: "does anything need me?" answered in under a second. The list
+ * is the screen — one FAB below it, nothing else competing. Machine identity,
+ * connection state and the utility screens now live on the Machine tab.
  */
 export default function Home() {
   const sessions = useWorkbench((s) => s.sessions);
@@ -83,13 +82,6 @@ export default function Home() {
 
   return (
     <Screen>
-      <MachineBar />
-
-      {/* One compact row, never a second screen of chrome: the list below it is
-          still what the eye lands on. Always navigable — unlike the FAB, these
-          four screens each have something honest to show while offline. */}
-      <ActionRow />
-
       {lastError !== null && (
         <Card accentEdge="danger" style={styles.error}>
           <View style={styles.errorRow}>
@@ -189,12 +181,14 @@ const FAB = space(14);
 const FAB_CLEAR = FAB + space(4) * 2;
 
 const styles = StyleSheet.create({
-  listBox: { flex: 1, marginBottom: FAB_CLEAR },
+  // paddingTop replaces the breathing room MachineBar used to give the screen
+  // before the tab bar took over the machine identity/connection chrome.
+  listBox: { flex: 1, marginBottom: FAB_CLEAR, paddingTop: space(2) },
   list: { paddingTop: space(1), paddingBottom: space(2) },
   // Centres the empty state in the space the list has, rather than at the top.
   emptyList: { flexGrow: 1 },
   separator: { height: space(2) },
-  error: { marginBottom: space(3) },
+  error: { marginTop: space(2), marginBottom: space(3) },
   errorRow: { flexDirection: "row", alignItems: "center", gap: space(2) },
   errorText: { flexShrink: 1 },
   dismiss: { width: touch.min, height: touch.min, alignItems: "center", justifyContent: "center" },
