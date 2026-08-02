@@ -94,6 +94,8 @@ export default function SessionScreen() {
 
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => setJump(showJump(e.nativeEvent.contentOffset.y));
   const toLatest = () => listRef.current?.scrollToOffset({ offset: 0, animated: true });
+  // Task 5 wires this to the session switcher.
+  const onTitlePress = () => {};
 
   // Every route out of the conversation lives behind the one overflow button:
   // the header's job is what this session is and whether it wants you, and a
@@ -129,10 +131,8 @@ export default function SessionScreen() {
         <BackButton />
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`${session?.title ?? "Session"} — switch session`}
-          // Task 5 hangs the session switcher here; until then the chevron is a
-          // promise the header keeps by itself.
-          onPress={() => {}}
+          accessibilityLabel={session?.title ?? "Session"}
+          onPress={onTitlePress}
           style={styles.titleBtn}
         >
           <Text variant="strong" numberOfLines={1} style={styles.titleText}>
@@ -298,13 +298,18 @@ function OverflowMenu({ open, onClose, items, top }: { open: boolean; onClose():
   // The modal has to outlive `open` for the exit to be seen at all.
   const [mounted, setMounted] = useState(open);
   const anim = useRef(new Animated.Value(0)).current;
+  // Tracks whether the menu has actually opened, so first mount (open === false)
+  // doesn't play the exit tween for a menu that was never shown.
+  const everOpened = useRef(open);
 
   useEffect(() => {
     if (open) {
+      everOpened.current = true;
       setMounted(true);
       Animated.timing(anim, { toValue: 1, duration: motion.base, easing: easing.out, useNativeDriver: true }).start();
       return;
     }
+    if (!everOpened.current) return;
     Animated.timing(anim, { toValue: 0, duration: motion.exit, useNativeDriver: true }).start(({ finished }) => {
       if (finished) setMounted(false);
     });

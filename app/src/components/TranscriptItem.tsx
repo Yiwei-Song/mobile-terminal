@@ -129,7 +129,7 @@ const styles = StyleSheet.create({
   },
   toolChip: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: space(2),
     minHeight: touch.min,
     paddingHorizontal: space(3),

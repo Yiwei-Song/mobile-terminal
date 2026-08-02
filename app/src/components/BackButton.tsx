@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet } from "react-native";
 import { router } from "expo-router";
-import { ArrowLeft } from "lucide-react-native";
+import { ChevronLeft } from "lucide-react-native";
 
 import { color, icon as iconSize, opacity, stroke, touch } from "../theme";
 
@@ -13,7 +13,7 @@ export function BackButton({ onPress }: { onPress?: () => void }) {
       onPress={onPress ?? (() => router.back())}
       style={({ pressed }) => [styles.btn, pressed && { opacity: opacity.pressed }]}
     >
-      <ArrowLeft size={iconSize.lg} color={color.text} strokeWidth={stroke.icon} />
+      <ChevronLeft size={iconSize.lg} color={color.text} strokeWidth={stroke.icon} />
     </Pressable>
   );
 }
