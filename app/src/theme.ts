@@ -100,9 +100,11 @@ export type TypeVariant = keyof typeof type;
 
 /**
  * Durations keep the 150-250ms cap (journey principle 5). `stagger` is 40ms —
- * list first paint only, decorative, never blocking input.
+ * list first paint only, decorative, never blocking input. `exit` is shorter
+ * than `base` on purpose: a thing leaving has already been decided about, so it
+ * should get out of the way faster than it arrived.
  */
-export const motion = { fast: 150, base: 200, slow: 250, stagger: 40 } as const;
+export const motion = { fast: 150, exit: 160, base: 200, slow: 250, stagger: 40 } as const;
 
 /**
  * Three curves, and only three:

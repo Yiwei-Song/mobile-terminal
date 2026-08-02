@@ -1,12 +1,13 @@
 import { useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from "react-native";
-import { Send } from "lucide-react-native";
+import { ActivityIndicator, Animated, Pressable, StyleSheet, TextInput, View } from "react-native";
+import { ArrowUp } from "lucide-react-native";
 
-import { color, icon as iconSize, opacity, radius, space, stroke, touch, type as typeScale } from "../theme";
+import { usePressScale } from "../lib/motion";
+import { color, icon as iconSize, radius, space, stroke, touch, type as typeScale } from "../theme";
 import { Text } from "./Text";
 
 /**
- * Bottom-anchored input. Dictation-friendly (autoCorrect left on), grows to five
+ * Bottom-anchored input. Dictation-friendly (autoCorrect left on), grows to four
  * lines then scrolls, and never optimistically echoes — the daemon broadcasts
  * the user's text back and that echo is the one source of truth.
  */
@@ -22,6 +23,7 @@ export function Composer({
 }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const press = usePressScale();
   const trimmed = text.trim();
   const canSend = trimmed.length > 0 && !sending && !disabled;
 
@@ -45,36 +47,46 @@ export function Composer({
       )}
       <View style={styles.row}>
         <TextInput
-          accessibilityLabel="Message the agent"
+          accessibilityLabel="Message Claude"
           style={styles.input}
-          placeholder="Message the agent…"
-          placeholderTextColor={color.idle}
+          placeholder="Message Claude…"
+          placeholderTextColor={color.textMut}
           value={text}
           onChangeText={setText}
           editable={!disabled}
           multiline
         />
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Send"
-          accessibilityState={{ disabled: !canSend, busy: sending }}
-          disabled={!canSend}
-          onPress={submit}
-          style={({ pressed }) => [styles.send, { opacity: canSend ? (pressed ? opacity.pressed : opacity.full) : opacity.disabled }]}
-        >
-          {sending ? (
-            <ActivityIndicator size="small" color={color.accentText} />
-          ) : (
-            <Send size={iconSize.md} color={color.accentText} strokeWidth={stroke.icon} />
-          )}
-        </Pressable>
+        {/* Filled only when there is something to send: an always-accent button
+            is a promise the empty composer can't keep. */}
+        <Animated.View style={{ transform: [{ scale: press.scale }] }}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Send"
+            accessibilityState={{ disabled: !canSend, busy: sending }}
+            disabled={!canSend}
+            onPress={submit}
+            onPressIn={press.onPressIn}
+            onPressOut={press.onPressOut}
+            style={[styles.send, canSend ? styles.sendOn : styles.sendOff]}
+          >
+            {sending ? (
+              <ActivityIndicator size="small" color={color.textMut} />
+            ) : (
+              <ArrowUp
+                size={iconSize.md}
+                color={canSend ? color.accentText : color.textMut}
+                strokeWidth={stroke.icon}
+              />
+            )}
+          </Pressable>
+        </Animated.View>
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { gap: space(1.5), paddingTop: space(2) },
+  wrap: { gap: space(1.5), paddingTop: space(2), paddingBottom: space(2) },
   hint: { paddingHorizontal: space(1) },
   row: { flexDirection: "row", alignItems: "flex-end", gap: space(2) },
   input: {
@@ -82,22 +94,23 @@ const styles = StyleSheet.create({
     flex: 1,
     color: color.text,
     minHeight: touch.min,
-    // Five body lines before it scrolls inside — a paragraph of dictation fits
+    // Four body lines before it scrolls inside — a paragraph of dictation fits
     // without swallowing the transcript.
-    maxHeight: typeScale.body.lineHeight * 5 + space(4),
-    paddingHorizontal: space(3),
+    maxHeight: typeScale.body.lineHeight * 4 + space(4),
+    paddingHorizontal: space(4),
     paddingVertical: space(2),
-    backgroundColor: color.surfaceHi,
-    borderRadius: radius.input,
+    backgroundColor: color.surface,
+    borderRadius: radius.card,
     borderWidth: stroke.hairline,
     borderColor: color.border,
   },
   send: {
     width: touch.min,
     height: touch.min,
-    borderRadius: radius.input,
+    borderRadius: radius.pill,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: color.accent,
   },
+  sendOn: { backgroundColor: color.accent },
+  sendOff: { backgroundColor: color.surfaceHi },
 });

@@ -1,7 +1,9 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Animated,
   FlatList,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   StyleSheet,
@@ -9,8 +11,19 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
-import { ArrowDown, GitCompare, MessageSquare, ShieldAlert, StopCircle, WifiOff } from "lucide-react-native";
+import {
+  ArrowDown,
+  ChevronDown,
+  Folder,
+  GitCompare,
+  MessageSquare,
+  MoreHorizontal,
+  ShieldAlert,
+  SquareTerminal,
+  StopCircle,
+} from "lucide-react-native";
 import type { LucideIcon } from "lucide-react-native";
 
 import { ApprovalCard } from "../../src/components/ApprovalCard";
@@ -20,12 +33,13 @@ import { Card } from "../../src/components/Card";
 import { Composer } from "../../src/components/Composer";
 import { EmptyState } from "../../src/components/EmptyState";
 import { Screen } from "../../src/components/Screen";
-import { StatusChip } from "../../src/components/StatusChip";
+import { statusMeta } from "../../src/components/StatusChip";
 import { Text } from "../../src/components/Text";
 import { TranscriptItem } from "../../src/components/TranscriptItem";
-import { showJump } from "../../src/lib/tools";
+import { useReducedMotion, usePressScale } from "../../src/lib/motion";
+import { runStartIds, showJump } from "../../src/lib/tools";
 import { useWorkbench, type Approval, type TranscriptItem as Item } from "../../src/lib/store";
-import { color, icon as iconSize, opacity, radius, space, stroke, touch } from "../../src/theme";
+import { color, easing, icon as iconSize, motion, opacity, radius, space, stroke, touch, type ColorRole } from "../../src/theme";
 
 // Stable empties: a fresh `[]` each render would give zustand a new snapshot
 // every time and spin the component.
@@ -33,7 +47,7 @@ const NO_ITEMS: Item[] = [];
 const NO_ASKS: Approval[] = [];
 
 /**
- * The session screen: transcript, the approval hero, and the composer. Task 7.
+ * The session screen: transcript, the approval hero, and the composer.
  */
 export default function SessionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -59,9 +73,14 @@ export default function SessionScreen() {
   const listRef = useRef<FlatList<Item>>(null);
   const [jump, setJump] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
+  const [menu, setMenu] = useState(false);
+  const insets = useSafeAreaInsets();
 
   // Inverted list wants newest first; the store keeps items oldest-first.
   const data = useMemo(() => [...items].reverse(), [items]);
+  // Attribution is decided on the ORIGINAL order and answered in ids, so the
+  // inversion above can never shift it by one. See runStartIds.
+  const runs = useMemo(() => runStartIds(items), [items]);
   const status = session?.status;
   const offline = connState !== "online";
   // After a 4001 the client HALTED reconnection, so "reconnecting…" is a lie and
@@ -76,50 +95,67 @@ export default function SessionScreen() {
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => setJump(showJump(e.nativeEvent.contentOffset.y));
   const toLatest = () => listRef.current?.scrollToOffset({ offset: 0, animated: true });
 
+  // Every route out of the conversation lives behind the one overflow button:
+  // the header's job is what this session is and whether it wants you, and a
+  // row of verbs next to that competes with the answer.
+  const act = (fn: () => void) => () => {
+    setMenu(false);
+    fn();
+  };
+  const menuItems: MenuItem[] = [
+    ...(session !== undefined
+      ? [
+          {
+            icon: GitCompare,
+            label: "Changes",
+            onPress: act(() => router.push({ pathname: "/files", params: { diff: session.cwd } })),
+          },
+        ]
+      : []),
+    // Plain browse: the files screen only takes `diff`, so there is no cwd to
+    // hand it — it opens on the daemon's roots.
+    { icon: Folder, label: "Files here", onPress: act(() => router.push("/files")) },
+    { icon: SquareTerminal, label: "Terminal here", onPress: act(() => router.push("/terminal")) },
+    ...(status === "running"
+      ? [{ icon: StopCircle, label: "Interrupt", tint: "danger" as ColorRole, onPress: act(() => setConfirmStop(true)) }]
+      : []),
+  ];
+
   return (
     <Screen>
-      {/* Two rows, not five controls in one: the title is the whole width of the
-          first, so it stops truncating at 390pt, and the state and the actions
-          share the second. Nothing moved out of reach — everything is still one
-          tap, still ≥48. */}
+      {/* One row: back, what this is, whether it wants you, everything else.
+          Nothing overhangs — each control pays for its own 48. */}
       <View style={styles.header}>
         <BackButton />
-        <Text variant="h2" numberOfLines={1} style={styles.flex}>
-          {session?.title ?? "Session"}
-        </Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${session?.title ?? "Session"} — switch session`}
+          // Task 5 hangs the session switcher here; until then the chevron is a
+          // promise the header keeps by itself.
+          onPress={() => {}}
+          style={styles.titleBtn}
+        >
+          <Text variant="strong" numberOfLines={1} style={styles.titleText}>
+            {session?.title ?? "Session"}
+          </Text>
+          <ChevronDown size={iconSize.sm} color={color.textMut} strokeWidth={stroke.icon} />
+        </Pressable>
+        {status !== undefined && (
+          // The word alone, in the status colour: the chip belongs to the list,
+          // where six of them have to be told apart at a glance.
+          <Text variant="micro" color={statusMeta(status).role} style={styles.status}>
+            {statusMeta(status).label}
+          </Text>
+        )}
+        <IconButton icon={MoreHorizontal} label="More actions" onPress={() => setMenu(true)} />
       </View>
 
-      <View style={styles.actions}>
-        {status !== undefined && <StatusChip status={status} />}
-        {offline && (
-          <View style={styles.offlineRow}>
-            <WifiOff size={iconSize.sm} color={color.textMut} strokeWidth={stroke.icon} />
-            <Text variant="sub" color="textMut">
-              Offline
-            </Text>
-          </View>
-        )}
-        <View style={styles.flex} />
-        {/* What the agent actually did to the working tree, one tap away —
-            reviewing the diff is the other half of answering an approval. */}
-        {session !== undefined && (
-          <HeaderAction
-            icon={GitCompare}
-            label="Changes"
-            a11y={`Changes in ${session.cwd}`}
-            onPress={() => router.push({ pathname: "/files", params: { diff: session.cwd } })}
-          />
-        )}
-        {status === "running" && (
-          <HeaderAction
-            icon={StopCircle}
-            label="Stop"
-            tint="danger"
-            a11y="Interrupt the agent"
-            onPress={() => setConfirmStop(true)}
-          />
-        )}
-      </View>
+      <OverflowMenu
+        open={menu}
+        onClose={() => setMenu(false)}
+        items={menuItems}
+        top={insets.top + space(2) + touch.min + space(1)}
+      />
 
       <KeyboardAvoidingView
         style={styles.flex}
@@ -155,7 +191,7 @@ export default function SessionScreen() {
                 inverted
                 data={data}
                 keyExtractor={(i) => i.id}
-                renderItem={({ item }) => <TranscriptItem item={item} />}
+                renderItem={({ item }) => <TranscriptItem item={item} runStart={runs.has(item.id)} />}
                 ItemSeparatorComponent={Separator}
                 contentContainerStyle={styles.listContent}
                 onScroll={onScroll}
@@ -169,10 +205,8 @@ export default function SessionScreen() {
                   onPress={toLatest}
                   style={({ pressed }) => [styles.jump, pressed && { opacity: opacity.pressed }]}
                 >
-                  <ArrowDown size={iconSize.sm} color={color.accentText} strokeWidth={stroke.icon} />
-                  <Text variant="sub" color="accentText">
-                    Latest
-                  </Text>
+                  <ArrowDown size={iconSize.sm} color={color.text} strokeWidth={stroke.icon} />
+                  <Text variant="micro">Latest</Text>
                 </Pressable>
               )}
             </>
@@ -251,64 +285,136 @@ export default function SessionScreen() {
   );
 }
 
-// A secondary header action: icon *and* word, because an unlabelled glyph in a
-// row of two is a guess. Text-sized, 48 tall.
-function HeaderAction({
-  icon: Icon,
-  label,
-  a11y,
-  tint = "textMut",
-  onPress,
-}: {
-  icon: LucideIcon;
-  label: string;
-  a11y: string;
-  tint?: "textMut" | "danger";
-  onPress: () => void;
-}) {
+type MenuItem = { icon: LucideIcon; label: string; tint?: ColorRole; onPress(): void };
+
+/**
+ * The header's overflow. A transparent modal so a tap anywhere else dismisses
+ * it, with the card anchored under the button that opened it — it grows from
+ * where it came from (0.97, not 0: a menu that inflates from nothing reads as a
+ * cartoon) and leaves faster than it arrived.
+ */
+function OverflowMenu({ open, onClose, items, top }: { open: boolean; onClose(): void; items: MenuItem[]; top: number }) {
+  const reduced = useReducedMotion();
+  // The modal has to outlive `open` for the exit to be seen at all.
+  const [mounted, setMounted] = useState(open);
+  const anim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      Animated.timing(anim, { toValue: 1, duration: motion.base, easing: easing.out, useNativeDriver: true }).start();
+      return;
+    }
+    Animated.timing(anim, { toValue: 0, duration: motion.exit, useNativeDriver: true }).start(({ finished }) => {
+      if (finished) setMounted(false);
+    });
+  }, [open, anim]);
+
+  if (!mounted) return null;
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={a11y}
-      onPress={onPress}
-      style={({ pressed }) => [styles.action, pressed && { opacity: opacity.pressed }]}
-    >
-      <Icon size={iconSize.md} color={color[tint]} strokeWidth={stroke.icon} />
-      <Text variant="sub" color={tint}>
-        {label}
-      </Text>
-    </Pressable>
+    <Modal transparent visible animationType="none" onRequestClose={onClose}>
+      <Pressable accessibilityLabel="Close menu" style={styles.backdrop} onPress={onClose} />
+      <Animated.View
+        style={[
+          styles.menu,
+          { top },
+          {
+            opacity: anim,
+            // Reduce motion: the fade stays, the scale goes.
+            transform: reduced ? [] : [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.97, 1] }) }],
+          },
+        ]}
+      >
+        {items.map((it) => (
+          <MenuRow key={it.label} item={it} />
+        ))}
+      </Animated.View>
+    </Modal>
+  );
+}
+
+function MenuRow({ item }: { item: MenuItem }) {
+  const press = usePressScale();
+  const Icon = item.icon;
+  const role = item.tint ?? "text";
+  return (
+    <Animated.View style={{ transform: [{ scale: press.scale }] }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={item.label}
+        onPress={item.onPress}
+        onPressIn={press.onPressIn}
+        onPressOut={press.onPressOut}
+        style={styles.menuRow}
+      >
+        <Icon size={iconSize.md} color={color[role]} strokeWidth={stroke.icon} />
+        <Text variant="body" color={role}>
+          {item.label}
+        </Text>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+// A bare 48pt glyph button. No negative margin: a hit box that hangs outside the
+// header's frame is not delivered touches on Android.
+function IconButton({ icon: Icon, label, onPress }: { icon: LucideIcon; label: string; onPress(): void }) {
+  const press = usePressScale();
+  return (
+    <Animated.View style={{ transform: [{ scale: press.scale }] }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        onPress={onPress}
+        onPressIn={press.onPressIn}
+        onPressOut={press.onPressOut}
+        style={styles.iconBtn}
+      >
+        <Icon size={iconSize.lg} color={color.text} strokeWidth={stroke.icon} />
+      </Pressable>
+    </Animated.View>
   );
 }
 
 const Separator = () => <View style={styles.separator} />;
 
-const JUMP = space(9);
-
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  header: {
+  header: { flexDirection: "row", alignItems: "center", paddingTop: space(2) },
+  titleBtn: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    gap: space(2),
-    paddingTop: space(2),
-  },
-  actions: { flexDirection: "row", alignItems: "center", gap: space(2), paddingBottom: space(2) },
-  action: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: space(1.5),
+    gap: space(1),
     minHeight: touch.min,
-    paddingHorizontal: space(2),
-    // No negative margin: a hit box that hangs outside the row's frame is not
-    // delivered touches on Android, so the 48 has to be paid for in layout.
+    paddingHorizontal: space(1),
   },
-  offlineRow: { flexDirection: "row", alignItems: "center", gap: space(1) },
+  titleText: { flexShrink: 1 },
+  status: { flexShrink: 0, paddingHorizontal: space(1) },
+  iconBtn: { width: touch.min, height: touch.min, alignItems: "center", justifyContent: "center" },
+  backdrop: { flex: 1 },
+  menu: {
+    position: "absolute",
+    right: space(4),
+    minWidth: space(44),
+    paddingVertical: space(1),
+    backgroundColor: color.surface,
+    borderRadius: radius.card,
+    borderWidth: stroke.hairline,
+    borderColor: color.border,
+  },
+  menuRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space(3),
+    minHeight: touch.min,
+    paddingHorizontal: space(4),
+  },
   transcript: { flex: 1 },
   opening: { paddingVertical: space(2), gap: space(1) },
   openingNote: { textAlign: "right" },
-  listContent: { paddingVertical: space(2), gap: space(2) },
-  separator: { height: space(1) },
+  listContent: { paddingVertical: space(2) },
+  separator: { height: space(4) },
   jump: {
     position: "absolute",
     alignSelf: "center",
@@ -317,11 +423,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     minHeight: touch.min,
-    gap: space(1),
-    paddingHorizontal: space(3),
-    paddingVertical: space(2),
+    gap: space(2),
+    paddingHorizontal: space(4),
     borderRadius: radius.pill,
-    backgroundColor: color.accent,
+    backgroundColor: color.surfaceHi,
+    borderWidth: stroke.hairline,
+    borderColor: color.border,
   },
   confirm: { gap: space(2), marginBottom: space(3) },
   confirmButtons: { flexDirection: "row", gap: space(3), marginTop: space(1) },
@@ -329,7 +436,7 @@ const styles = StyleSheet.create({
     marginBottom: space(2),
     paddingVertical: space(2),
     paddingHorizontal: space(3),
-    borderRadius: radius.input,
+    borderRadius: radius.card,
     backgroundColor: color.surface,
     borderWidth: stroke.hairline,
     borderColor: color.border,
