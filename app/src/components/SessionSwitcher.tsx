@@ -75,7 +75,6 @@ export function SessionSwitcher({ open, currentId, onClose }: SessionSwitcherPro
   const heightRef = useRef(0);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
-  const dragging = useRef(false);
   const everOpened = useRef(open);
   // Set when the drag itself dismissed the sheet: the spring already played, so
   // the `open -> false` that follows must not start a second exit over it.
@@ -124,7 +123,6 @@ export function SessionSwitcher({ open, currentId, onClose }: SessionSwitcherPro
         // Claim on movement, not on touch: a tap on the header is not a drag.
         onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dy) > 2,
         onPanResponderGrant: () => {
-          dragging.current = true;
           // Interruptible: whatever was animating stops where it is, and the
           // finger picks the sheet up from exactly there.
           t.stopAnimation();
@@ -139,7 +137,6 @@ export function SessionSwitcher({ open, currentId, onClose }: SessionSwitcherPro
           t.setValue(Math.min(1, Math.max(0, startT.current - g.dy / h)));
         },
         onPanResponderRelease: (_e, g) => {
-          dragging.current = false;
           const h = heightRef.current;
           // gestureState.vy is px/ms and positive downward; Animated wants the
           // value's own units per second, and down means t decreasing.
@@ -158,7 +155,6 @@ export function SessionSwitcher({ open, currentId, onClose }: SessionSwitcherPro
           });
         },
         onPanResponderTerminate: () => {
-          dragging.current = false;
           Animated.spring(t, { toValue: 1, ...SPRING, useNativeDriver: true }).start();
         },
       }),
@@ -183,9 +179,21 @@ export function SessionSwitcher({ open, currentId, onClose }: SessionSwitcherPro
 
   if (!mounted) return null;
   return (
-    <Modal transparent visible animationType="none" onRequestClose={onClose}>
+    <Modal
+      transparent
+      visible
+      animationType="none"
+      onRequestClose={onClose}
+      statusBarTranslucent
+      navigationBarTranslucent
+    >
       <View style={styles.fill}>
-        <Animated.View style={[styles.scrim, { opacity: t.interpolate({ inputRange: [0, 1], outputRange: [0, SCRIM] }) }]}>
+        <Animated.View
+          style={[
+            styles.scrim,
+            { opacity: t.interpolate({ inputRange: [0, 1], outputRange: [0, SCRIM], extrapolate: "clamp" }) },
+          ]}
+        >
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Close session switcher"
@@ -213,7 +221,13 @@ export function SessionSwitcher({ open, currentId, onClose }: SessionSwitcherPro
                   // `|| screen` covers the frame before the first layout: at 0
                   // the sheet would sit at rest with t still 0 and flash.
                   transform: [
-                    { translateY: t.interpolate({ inputRange: [0, 1], outputRange: [height || screen, 0] }) },
+                    {
+                      translateY: t.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [height || screen, 0],
+                        extrapolate: "clamp",
+                      }),
+                    },
                   ],
                 },
           ]}
