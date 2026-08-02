@@ -232,7 +232,12 @@ export const useWorkbench = create<Workbench>((set, get) => ({
   markSeen(sessionId) {
     // Not cleared by disconnect(): what you have read is the phone's own memory,
     // not the daemon's state.
-    const seenAt = { ...get().seenAt, [sessionId]: new Date().toISOString() };
+    // Phone clock can trail the daemon's; seeing the row means seeing everything
+    // up to its updatedAt, so a lagging phone clock can never leave the dot stuck.
+    const row = get().sessions.find((s) => s.sessionId === sessionId);
+    const now = new Date().toISOString();
+    const stamp = row !== undefined && row.updatedAt > now ? row.updatedAt : now;
+    const seenAt = { ...get().seenAt, [sessionId]: stamp };
     set({ seenAt });
     void saveSeen(seenAt);
   },
@@ -533,9 +538,18 @@ export const useWorkbench = create<Workbench>((set, get) => ({
 // Read marks are on disk, so hydrate once at start-up rather than making every
 // screen ask. Marks made before storage answers win — the user's tap now is
 // newer than anything the file can hold.
-void loadSeen().then((stored) => {
-  useWorkbench.setState({ seenAt: { ...stored, ...useWorkbench.getState().seenAt } });
-});
+void loadSeen()
+  .then((stored) => {
+    const current = useWorkbench.getState().seenAt;
+    const merged = { ...stored, ...current };
+    useWorkbench.setState({ seenAt: merged });
+    // A markSeen before hydration already saved its own (partial) map to disk —
+    // merge back in what hydration just found, or the rest of it is missing from
+    // disk until the next markSeen happens to save again.
+    if (Object.keys(current).length > 0) void saveSeen(merged).catch(() => {});
+  })
+  // storage failure = everything reads unread once, acceptable
+  .catch(() => {});
 
 // sessions.pending returns one flat list across all sessions; the store keys
 // approvals by session.
