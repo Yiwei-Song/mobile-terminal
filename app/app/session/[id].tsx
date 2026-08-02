@@ -116,16 +116,21 @@ export default function SessionScreen() {
             onPress: act(() => router.push({ pathname: "/files", params: { diff: session.cwd } })),
           },
           // "here" means this session's folder — `cwd` opens the browser in it
-          // rather than on the daemon's roots. Only offered once the session is
-          // in hand: there is no "here" to scope to before that.
+          // rather than on the daemon's roots, and starts the shell in it rather
+          // than wherever the daemon happens to sit. Both are only offered once
+          // the session is in hand: there is no "here" to scope to before that.
           {
             icon: Folder,
             label: "Files here",
             onPress: act(() => router.push({ pathname: "/files", params: { cwd: session.cwd } })),
           },
+          {
+            icon: SquareTerminal,
+            label: "Terminal here",
+            onPress: act(() => router.push({ pathname: "/terminal", params: { cwd: session.cwd } })),
+          },
         ]
       : []),
-    { icon: SquareTerminal, label: "Terminal here", onPress: act(() => router.push("/terminal")) },
     ...(status === "running"
       ? [{ icon: StopCircle, label: "Interrupt", tint: "danger" as ColorRole, onPress: act(() => setConfirmStop(true)) }]
       : []),

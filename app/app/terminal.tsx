@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
-import { router, useFocusEffect } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import {
   ArrowDown,
@@ -48,9 +48,14 @@ export default function TerminalScreen() {
   const killTerminal = useWorkbench((s) => s.killTerminal);
   const connect = useWorkbench((s) => s.connect);
 
+  // A session's "Terminal here" passes its folder: the new shell has to start
+  // where the work is, or the row's label is a lie. Seeds the field only — the
+  // user can still edit it before starting, and a bare /terminal is unchanged.
+  const { cwd: scope } = useLocalSearchParams<{ cwd?: string }>();
+
   const [pairing, setPairing] = useState<Pairing | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
-  const [cwd, setCwd] = useState("");
+  const [cwd, setCwd] = useState(scope ?? "");
   const [recents, setRecents] = useState<string[]>([]);
   const [starting, setStarting] = useState(false);
   const [ctrl, setCtrl] = useState(false);
