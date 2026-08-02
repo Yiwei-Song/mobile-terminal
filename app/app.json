@@ -39,6 +39,14 @@
           "cameraPermission": "Workbench uses the camera once, to read the pairing QR code your daemon prints.",
           "recordAudioAndroid": false
         }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
       ]
     ],
     "experiments": {
