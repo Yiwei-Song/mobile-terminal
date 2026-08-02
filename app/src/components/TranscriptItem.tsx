@@ -129,7 +129,10 @@ const styles = StyleSheet.create({
   },
   toolChip: {
     flexDirection: "row",
-    alignItems: "flex-start",
+    // center, not flex-start: collapsed single-line rows are the common state
+    // and must sit on the chip's optical center; a tall expanded summary
+    // floating its chevron is the rarer, cheaper compromise.
+    alignItems: "center",
     gap: space(2),
     minHeight: touch.min,
     paddingHorizontal: space(3),
