@@ -36,8 +36,8 @@ export type ButtonProps = Omit<PressableProps, "style" | "children"> & {
   style?: ViewStyle;
 };
 
-// `danger` is a tinted outline, not a filled red: white-on-#EF4444 is only ~3.7:1,
-// and journey principle 2 wants the destructive choice visually quieter than Allow.
+// `danger` is a tinted outline, not a filled red: journey principle 2 wants the
+// destructive choice visually quieter than the affirmative one.
 const surfaceFor: Record<ButtonVariant, ViewStyle> = {
   primary: { backgroundColor: color.accent },
   outline: { borderWidth: stroke.hairline, borderColor: color.border },
@@ -118,7 +118,10 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
   },
   greyed: { backgroundColor: color.surface, borderWidth: stroke.hairline, borderColor: color.border },
-  fill: { flex: 1 },
+  // flex:1 alone collapses to 0 height in an auto-sized column (basis 0, no
+  // free space to grow into) and the button overflows onto its sibling; the
+  // minHeight keeps the wrapper at least as tall as the Pressable it contains.
+  fill: { flex: 1, minHeight: touch.min },
   row: {
     flexDirection: "row",
     alignItems: "center",
