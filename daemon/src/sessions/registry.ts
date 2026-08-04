@@ -1,5 +1,5 @@
 import { hostname } from "node:os";
-import type { ConfigInfo, PermissionEvent, Project, PushEvent, SessionEvent } from "../protocol.js";
+import type { Agent, ConfigInfo, PermissionEvent, Project, PushEvent, SessionEvent } from "../protocol.js";
 import { setNtfyTopic, type Config } from "../config.js";
 import { VERSION } from "../version.js";
 import { snapshot, topProcesses, killProcess, type SystemDeps } from "../system.js";
@@ -10,6 +10,7 @@ import { listeningPorts } from "../ports.js";
 import type { ToolRunner } from "../tools.js";
 import { ClaudeSession, type ClaudeDeps } from "./claude.js";
 import { discover, discoveredRoots } from "./discover.js";
+import { readTranscript } from "./transcript.js";
 import type { Manifest, ManifestEntry } from "./manifest.js";
 
 type StatusEvent = Extract<SessionEvent, { kind: "session.status" }>;
@@ -108,12 +109,31 @@ export class Registry {
         // Stopped but known: restart the CLI with --resume and let the text be
         // the prompt. Awaited so a second send finds it live instead of
         // starting a duplicate. Plan 5's boot-resume calls this same path.
-        const prev = this.entry(params.sessionId);
+        const prev = this.entry(params.sessionId) ?? this.discovered(params.sessionId);
+        if (prev === null) throw new Error("unknown session");
+        // Resuming forks: both agents write a NEW transcript under a NEW id with
+        // the parent's history copied in, so nothing here can corrupt a session
+        // the desktop app is holding — the two never share a file.
+        //
+        // What it CAN do is run a second agent in a folder where one is already
+        // working, and two agents editing the same tree is a real collision. So
+        // that one case is refused, with the reason, rather than silently racing.
+        const busy = this.runningIn(prev.cwd);
+        if (busy !== null && busy !== params.sessionId) {
+          throw new Error(`another session is working in ${prev.cwd} — stop it first, or wait for it to finish`);
+        }
         // The resume can come back under a forked id, so echo the id the CLI
         // actually reported — not the one the phone asked for.
         this.echo(await this.start({ cwd: prev.cwd, prompt: params.text, title: prev.title, resume: prev.sessionId }).id, params.text);
         return {};
       }
+
+      // History, read from the agent's own transcript file rather than from
+      // events this daemon happened to see. A daemon restart used to show an
+      // empty conversation and a desktop-started session showed nothing at all;
+      // the history was on disk the whole time.
+      case "sessions.transcript":
+        return readTranscript(this.machine.home, params.agent ?? this.agentOf(params.sessionId), params.sessionId);
 
       case "config.get":
         return this.configInfo();
@@ -124,14 +144,20 @@ export class Registry {
 
       case "sessions.interrupt": {
         const live = this.live.get(params.sessionId);
-        // A stopped session has no turn to stop; only a wholly unknown id errors.
+        // A stopped session has no turn to stop; only a wholly unknown id
+        // errors. A session found on disk but not owned here counts as known —
+        // it exists, this daemon simply has no turn of its own to interrupt.
         if (live) live.interrupt();
-        else this.entry(params.sessionId);
+        else if (this.entry(params.sessionId) === null && this.discovered(params.sessionId) === null) {
+          throw new Error("unknown session");
+        }
         return {};
       }
 
       case "sessions.approve": {
-        if (!this.live.has(params.sessionId)) this.entry(params.sessionId);
+        // Strict: a requestId only ever exists for a session this daemon runs,
+        // so a discovered one is not a valid target however real it is.
+        if (!this.live.has(params.sessionId)) this.mustEntry(params.sessionId);
         // The composite key is what binds the answer to the session that asked:
         // a requestId from another session simply does not match.
         const key = `${params.sessionId}:${params.requestId}`;
@@ -294,10 +320,51 @@ export class Registry {
     return projects;
   }
 
-  private entry(sessionId: string): ManifestEntry {
-    const e = this.manifest.list().find((x) => x.sessionId === sessionId);
-    if (!e) throw new Error("unknown session");
+  // Null rather than throwing: callers that can fall back to discovery decide
+  // what "unknown" means. `sessions.interrupt`/`approve` still treat it as an
+  // error, which is why they check the result.
+  private entry(sessionId: string): ManifestEntry | null {
+    return this.manifest.list().find((x) => x.sessionId === sessionId) ?? null;
+  }
+
+  private mustEntry(sessionId: string): ManifestEntry {
+    const e = this.entry(sessionId);
+    if (e === null) throw new Error("unknown session");
     return e;
+  }
+
+  /**
+   * A thread this daemon never started — found by scanning the agents' own
+   * stores. Matched on any id in the lineage, because the phone may hold an
+   * older fork's id while the only continuable one is the newest leaf; resuming
+   * the id the user tapped would branch from stale history and silently drop
+   * everything after it.
+   */
+  private discovered(sessionId: string): ManifestEntry | null {
+    for (const p of this.projects()) {
+      for (const t of p.threads) {
+        if (t.threadId !== sessionId && !t.sessionIds.includes(sessionId)) continue;
+        return { sessionId: t.resumeId, agent: t.agent, cwd: t.cwd, title: t.title, status: t.status, updatedAt: t.updatedAt };
+      }
+    }
+    return null;
+  }
+
+  /** Which agent wrote this session's transcript, so the reader knows which
+   *  format to parse. Defaults to claude — the manifest's own sessions. */
+  private agentOf(sessionId: string): Agent {
+    return this.entry(sessionId)?.agent ?? this.discovered(sessionId)?.agent ?? "claude";
+  }
+
+  /** The id of a session this daemon is actively running in `cwd`, or null.
+   *  Only sessions the daemon owns count: a desktop-owned session writes its own
+   *  forked transcript and is the desktop's business, not a lock on the folder. */
+  private runningIn(cwd: string): string | null {
+    const key = cwd.toLowerCase();
+    for (const e of this.manifest.list()) {
+      if (e.status === "running" && e.cwd.toLowerCase() === key && this.live.has(e.sessionId)) return e.sessionId;
+    }
+    return null;
   }
 
   private start(o: { cwd: string; prompt: string; title?: string; resume?: string }): ClaudeSession {

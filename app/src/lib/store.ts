@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ConfigInfo, Entry, Metrics, Port, Proc, PushEvent, SessionEvent, SessionRow, SessionStatus, TermInfo, ToolStatus } from "@shared/protocol";
+import type { ConfigInfo, Entry, Metrics, Port, Proc, Project, PushEvent, SessionEvent, SessionRow, SessionStatus, TermInfo, ToolStatus } from "@shared/protocol";
 
 import { WorkbenchClient, type ClientOpts, type ConnState } from "./client";
 import { loadSeen, saveSeen, type Seen } from "./seen";
@@ -17,6 +17,11 @@ export type TranscriptItem =
 
 export interface Workbench {
   sessions: SessionRow[];
+  // Every session on the PC, grouped by folder — including ones started in the
+  // desktop apps, which the daemon reads from their own stores. Separate from
+  // `sessions` (the daemon's own manifest) because they answer different
+  // questions: `sessions` is "what needs me", this is "what exists".
+  projects: Project[];
   transcripts: Record<string, TranscriptItem[] | undefined>;
   pendingApprovals: Record<string, Approval[] | undefined>;
   connState: ConnState;
@@ -69,6 +74,10 @@ export interface Workbench {
   // banner. The automatic re-list on every reconnect fails all the time by
   // design and reporting it would make the screen shout at a walk out of range.
   refreshSessions(userInitiated?: boolean): Promise<void>;
+  refreshProjects(userInitiated?: boolean): Promise<void>;
+  // Seed a conversation from the agent's own transcript file on the PC. Never
+  // rejects: history that cannot be read is an empty conversation, not a banner.
+  loadTranscript(sessionId: string): Promise<void>;
   applyEvent(e: PushEvent): void;
   // Screen-driven polling read (metrics + processes together). Not tracked: a
   // blip on the 3s tick must not flash a banner — same reasoning as the
@@ -142,6 +151,7 @@ const append = (
 
 export const useWorkbench = create<Workbench>((set, get) => ({
   sessions: [],
+  projects: [],
   transcripts: {},
   pendingApprovals: {},
   connState: "offline",
@@ -208,6 +218,7 @@ export const useWorkbench = create<Workbench>((set, get) => ({
     refreshing = false;
     set({
       sessions: [],
+      projects: [],
       transcripts: {},
       pendingApprovals: {},
       connState: "offline",
@@ -240,6 +251,44 @@ export const useWorkbench = create<Workbench>((set, get) => ({
     const seenAt = { ...get().seenAt, [sessionId]: stamp };
     set({ seenAt });
     void saveSeen(seenAt);
+  },
+
+  // Read straight off the daemon's scan of both agents' own stores. Replaces
+  // wholesale rather than merging: the PC is authoritative about what exists,
+  // and a session archived or deleted there must stop appearing here.
+  async refreshProjects(userInitiated) {
+    if (client === null) return;
+    const req = client.request<Project[]>("sessions.projects");
+    set({ projects: await (userInitiated === true ? track(req) : req) });
+  },
+
+  /**
+   * History for a session, read off disk by the daemon.
+   *
+   * Only when the conversation is empty here: once live events have arrived they
+   * are the newer truth, and replacing them with a file read would drop whatever
+   * landed in between. This is what makes a session survive a daemon restart —
+   * and what makes a session started in the desktop app readable at all.
+   */
+  async loadTranscript(sessionId) {
+    if (client === null) return;
+    if ((get().transcripts[sessionId] ?? []).length > 0) return;
+    try {
+      const entries = await client.request<{ kind: "text" | "tool"; [k: string]: unknown }[]>("sessions.transcript", { sessionId });
+      // Re-checked after the await: a live event may have arrived while the
+      // request was in flight, and it outranks the file.
+      if ((get().transcripts[sessionId] ?? []).length > 0) return;
+      set({
+        transcripts: {
+          ...get().transcripts,
+          // Ids are positional and local to this replay — nothing correlates
+          // them with live event ids, and nothing needs to.
+          [sessionId]: entries.map((e, i) => ({ ...e, id: `history-${i}` }) as TranscriptItem),
+        },
+      });
+    } catch {
+      // An unreadable transcript is an empty one; the screen says so already.
+    }
   },
 
   async refreshSessions(userInitiated) {

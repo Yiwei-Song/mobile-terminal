@@ -1,4 +1,4 @@
-import { closeSync, fstatSync, openSync, readdirSync, readSync, statSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { SessionStatus } from "../protocol.js";
@@ -127,11 +127,12 @@ const tryEdges = (file: string): { head: string; tail: string } | null => {
   }
 };
 
-const mtime = (file: string): string => {
+const stamp = (file: string): { updatedAt: string; size: number } => {
   try {
-    return statSync(file).mtime.toISOString();
+    const s = statSync(file);
+    return { updatedAt: s.mtime.toISOString(), size: s.size };
   } catch {
-    return new Date(0).toISOString();
+    return { updatedAt: new Date(0).toISOString(), size: 0 };
   }
 };
 
@@ -144,6 +145,15 @@ interface Leaf {
   title: string | null;
   status: SessionStatus;
   updatedAt: string;
+  // Only ever a tie-break on `updatedAt`, and only within one lineage: a fork
+  // copies its parent's whole transcript and then appends, so among forks of the
+  // same conversation the newest is the largest. Needed because two forks can
+  // share an mtime to the millisecond, and picking the wrong one as `resumeId`
+  // means continuing from stale history and dropping the turns in between.
+  // ponytail: size, not ancestor depth — depth would mean parsing every id out
+  // of a 14 MB file to order three of them. Revisit if compaction ever makes a
+  // child smaller than its parent.
+  size: number;
 }
 
 /**
@@ -189,7 +199,7 @@ export function scanClaude(home: string, live: Map<string, LiveClaude>): Leaf[] 
         // thread with no title anywhere falls back at the stitching step.
         title: l?.name ?? lastOf(e.tail, "customTitle") ?? firstOf(e.head, "lastPrompt"),
         status: l?.status ?? "idle",
-        updatedAt: mtime(file),
+        ...stamp(file),
       });
     }
   }
@@ -214,6 +224,32 @@ export function scanCodex(home: string): Leaf[] {
   return codexFromDb(home) ?? scanCodexRollouts(home);
 }
 
+/**
+ * Codex threads that are really imported Claude sessions.
+ *
+ * Codex can adopt a Claude transcript into its own thread table, keeping the
+ * title and the folder. Both stores then describe the same conversation, and
+ * the phone showed it twice — once per agent, side by side, which is exactly the
+ * disagreement between surfaces this whole module exists to prevent.
+ *
+ * `external_agent_session_imports.json` is Codex's own record of what it
+ * imported and from which `.claude` file, so the duplicate is dropped on
+ * authority rather than on a title-and-folder guess that would also collapse two
+ * genuinely different sessions that happen to share a name.
+ */
+function importedFromClaude(home: string): Set<string> {
+  try {
+    const raw: unknown = JSON.parse(readFileSync(join(home, ".codex", "external_agent_session_imports.json"), "utf8"));
+    const records = (raw as { records?: { imported_thread_id?: unknown }[] })?.records;
+    if (!Array.isArray(records)) return new Set();
+    return new Set(records.map((r) => r?.imported_thread_id).filter((id): id is string => typeof id === "string"));
+  } catch {
+    // No imports file, or one we cannot read: nothing is known to be a
+    // duplicate. Showing a session twice beats hiding it.
+    return new Set();
+  }
+}
+
 function codexFromDb(home: string): Leaf[] | null {
   let db: DatabaseSync;
   try {
@@ -221,6 +257,7 @@ function codexFromDb(home: string): Leaf[] | null {
   } catch {
     return null;
   }
+  const imported = importedFromClaude(home);
   try {
     const rows = db
       .prepare(
@@ -235,7 +272,7 @@ function codexFromDb(home: string): Leaf[] | null {
       )
       .all() as { id: string; rollout_path: string; cwd: string; title: string; name: string | null; ms: number }[];
 
-    return rows.map((r) => {
+    return rows.filter((r) => !imported.has(r.id)).map((r) => {
       // The rollout header is the only place Codex records which thread a resume
       // grew out of — `thread_spawn_edges` exists but is empty in practice. Only
       // the threads the table lists are opened, so this is ~180 small reads and
@@ -249,7 +286,10 @@ function codexFromDb(home: string): Leaf[] | null {
         // `name` is a name the owner typed; `title` is the one Codex derived.
         title: (r.name ?? "").trim() || r.title.trim() || null,
         status: "idle" as const,
+        // The table's own timestamp, not the file's: it is what the Codex UI
+        // orders by, and a rollout can be touched without the thread moving.
         updatedAt: new Date(r.ms).toISOString(),
+        size: stamp(r.rollout_path).size,
       };
     });
   } catch {
@@ -296,7 +336,7 @@ export function scanCodexRollouts(home: string): Leaf[] {
       // disk is history. A Codex session the daemon itself owns is tracked by
       // the registry and overrides this.
       status: "idle",
-      updatedAt: mtime(file),
+      ...stamp(file),
     });
   }
   return out;
@@ -338,10 +378,14 @@ export function discover(home: string, live = liveClaudeSessions(home)): Project
 
   // Stitch: agent + root id is the thread identity that survives forking.
   const threads = new Map<string, Thread>();
+  // The leaf each thread's `resumeId` currently comes from, so the comparison
+  // can tie-break on size — Thread itself has no business carrying a byte count.
+  const newest = new Map<string, Leaf>();
   for (const l of leaves) {
     const key = `${l.agent}:${l.rootId}`;
     const t = threads.get(key);
     if (t === undefined) {
+      newest.set(key, l);
       threads.set(key, {
         threadId: l.rootId,
         agent: l.agent,
@@ -359,7 +403,8 @@ export function discover(home: string, live = liveClaudeSessions(home)): Project
     // one. Title and resume target follow the newest leaf: an older fork's
     // title is a stale name for a conversation that has moved on.
     if (l.status !== "idle") t.status = l.status;
-    if (l.updatedAt > t.updatedAt) {
+    if (newerLeaf(l, newest.get(key))) {
+      newest.set(key, l);
       t.updatedAt = l.updatedAt;
       t.resumeId = l.sessionId;
       t.cwd = l.cwd;
@@ -397,6 +442,13 @@ export function discover(home: string, live = liveClaudeSessions(home)): Project
 // groups.ts relies on, and the reason nothing here calls Date.parse per compare.
 const newestFirst = (a: { updatedAt: string }, b: { updatedAt: string }): number =>
   a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0;
+
+/** Is `l` a later fork of the same conversation than `held`? mtime decides, and
+ *  size breaks a tie — two forks written inside the same millisecond otherwise
+ *  resolve to whichever the directory happened to list first, which is how a
+ *  stale fork can end up as the one the phone continues from. */
+const newerLeaf = (l: Leaf, held: Leaf | undefined): boolean =>
+  held === undefined || l.updatedAt > held.updatedAt || (l.updatedAt === held.updatedAt && l.size > held.size);
 
 /** Absolute path of every project found, for `allowedRoots`. Sessions the owner
  *  can see must also be sessions whose files the owner can open. */

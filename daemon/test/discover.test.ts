@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -80,6 +80,26 @@ describe("discover", () => {
     expect(threads[0].title).toBe("Handover build (fork 2)");
   });
 
+  // Regression: three forks written inside the same millisecond share an mtime,
+  // and `resumeId` fell to whatever order the directory listed. Continuing from
+  // a stale fork silently drops every turn after it. Size breaks the tie — a
+  // fork contains its parent's whole transcript plus more.
+  it("picks the newest fork even when every file shares an mtime", () => {
+    const h = home();
+    const cwd = "D:\\Proj";
+    claudeFile(h, "D--Proj", "old", { cwd, title: "old" });
+    claudeFile(h, "D--Proj", "mid", { cwd, ancestors: ["old"], title: "mid" });
+    claudeFile(h, "D--Proj", "new", { cwd, ancestors: ["old", "mid"], title: "new" });
+    const when = new Date("2026-08-04T12:00:00.000Z");
+    for (const id of ["old", "mid", "new"]) {
+      utimesSync(join(h, ".claude", "projects", "D--Proj", `${id}.jsonl`), when, when);
+    }
+
+    const [t] = discover(h, new Map())[0].threads;
+    expect(t.resumeId).toBe("new");
+    expect(t.title).toBe("new");
+  });
+
   it("groups by working directory and sinks generated projects below real ones", () => {
     const h = home();
     claudeFile(h, "D--Real", "r1", { cwd: "D:\\Real", title: "Real work" });
@@ -148,6 +168,45 @@ describe("discover", () => {
     expect(leaves.find((l) => l.sessionId === "named")?.title).toBe("My name");
     // The Win32 extended-length prefix is stripped, so both rows are one project.
     expect(new Set(leaves.map((l) => l.cwd))).toEqual(new Set(["D:\\Proj"]));
+  });
+
+  // Codex can adopt a Claude transcript into its own thread table, keeping the
+  // title and folder. Both stores then describe one conversation, and the phone
+  // listed it twice side by side — the exact disagreement between surfaces this
+  // module exists to prevent. Caught on the emulator, not by a fixture.
+  it("drops Codex threads that are imported Claude sessions", () => {
+    const h = home();
+    const cwd = "D:\\Mobile-access";
+    claudeFile(h, "D--Mobile-access", "claude-original", { cwd, title: "Handover build" });
+    codexDb(h, [
+      { id: "imported-copy", cwd, title: "Handover build", ms: 5000 },
+      { id: "genuinely-codex", cwd, title: "Improve settings", ms: 4000 },
+    ]);
+    writeFileSync(
+      join(h, ".codex", "external_agent_session_imports.json"),
+      JSON.stringify({
+        records: [
+          {
+            source_path: "\\\\?\\C:\\Users\\y\\.claude\\projects\\D--Mobile-access\\claude-original.jsonl",
+            imported_thread_id: "imported-copy",
+          },
+        ],
+      }),
+    );
+
+    const threads = discover(h, new Map())[0].threads;
+    expect(threads.map((t) => t.threadId).sort()).toEqual(["claude-original", "genuinely-codex"]);
+    // The surviving copy is the Claude original, not Codex's adoption of it.
+    expect(threads.find((t) => t.title === "Handover build")?.agent).toBe("claude");
+  });
+
+  // Showing a session twice beats hiding it: an unreadable imports file must not
+  // silently delete genuine Codex threads.
+  it("keeps every Codex thread when the imports record is unreadable", () => {
+    const h = home();
+    codexDb(h, [{ id: "c1", cwd: "D:\\P", title: "Real", ms: 1000 }]);
+    writeFileSync(join(h, ".codex", "external_agent_session_imports.json"), "{ not json");
+    expect(scanCodex(h).map((l) => l.sessionId)).toEqual(["c1"]);
   });
 
   // A schema that moves under us must degrade to the slower reader, not to an

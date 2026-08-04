@@ -8,10 +8,13 @@
 // not substitute .js -> .ts. shared/ is outside daemon's tsconfig include, so
 // NodeNext's extension rule never applies to this file.
 export type {
+  Agent,
   ClientMsg,
   ConfigInfo,
   Entry,
   Port,
+  Project,
+  Thread,
   ServerMsg,
   SessionStatus,
   SessionEvent,

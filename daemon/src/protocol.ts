@@ -5,6 +5,7 @@ export type ClientMsg =
   | { type: "auth"; token: string }
   | { type: "req"; id: string; method: "sessions.list" }
   | { type: "req"; id: string; method: "sessions.projects" }
+  | { type: "req"; id: string; method: "sessions.transcript"; params: { sessionId: string; agent?: Agent } }
   | { type: "req"; id: string; method: "sessions.new"; params: { cwd: string; prompt: string; title?: string } }
   | { type: "req"; id: string; method: "sessions.send"; params: { sessionId: string; text: string } }
   | { type: "req"; id: string; method: "sessions.interrupt"; params: { sessionId: string } }
@@ -89,6 +90,13 @@ export interface Project {
   threadCount: number;
   threads: Thread[];
 }
+
+// One rendered line of history, read from an agent's own transcript file.
+// Mirrors the two SessionEvent kinds a transcript is built from, minus the
+// sessionId — the request already named the session.
+export type TranscriptEntry =
+  | { kind: "text"; role: "assistant" | "user"; text: string }
+  | { kind: "tool"; name: string; summary: string };
 
 // Machine metrics for the mobile System screen. Defined here (not in system.ts)
 // because system.ts type-imports `systeminformation`, and the app re-exports the
@@ -204,6 +212,7 @@ const dim = (v: unknown): boolean => Number.isInteger(v) && (v as number) >= 1 &
 const METHODS = new Map<string, (p: any) => boolean>([
   ["sessions.list", () => true],
   ["sessions.projects", () => true],
+  ["sessions.transcript", (p) => str(p?.sessionId) && (p.agent === undefined || p.agent === "claude" || p.agent === "codex")],
   ["sessions.new", (p) => str(p?.cwd) && str(p?.prompt) && (p.title === undefined || str(p.title))],
   ["sessions.send", (p) => str(p?.sessionId) && str(p?.text)],
   ["sessions.interrupt", (p) => str(p?.sessionId)],

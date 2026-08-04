@@ -38,6 +38,7 @@ import { statusMeta } from "../../src/components/StatusChip";
 import { Text } from "../../src/components/Text";
 import { TranscriptItem } from "../../src/components/TranscriptItem";
 import { useReducedMotion, usePressScale } from "../../src/lib/motion";
+import { threadAsSession } from "../../src/lib/projects";
 import { runStartIds, showJump } from "../../src/lib/tools";
 import { useWorkbench, type Approval, type TranscriptItem as Item } from "../../src/lib/store";
 import { color, easing, icon as iconSize, motion, opacity, radius, space, stroke, touch, type ColorRole } from "../../src/theme";
@@ -52,8 +53,16 @@ const NO_ASKS: Approval[] = [];
  */
 export default function SessionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const session = useWorkbench((s) => s.sessions.find((x) => x.sessionId === id));
+  const owned = useWorkbench((s) => s.sessions.find((x) => x.sessionId === id));
+  const projects = useWorkbench((s) => s.projects);
+  // A conversation opened from Projects is not in the daemon's own manifest —
+  // it was started in a desktop app. Falling back to the discovered thread is
+  // what gives it the same header, folder actions and status as any other.
+  // Memoized: threadAsSession builds a row, and returning a fresh object from a
+  // selector on every render would loop.
+  const session = useMemo(() => owned ?? threadAsSession(projects, id), [owned, projects, id]);
   const items = useWorkbench((s) => s.transcripts[id] ?? NO_ITEMS);
+  const loadTranscript = useWorkbench((s) => s.loadTranscript);
   const asks = useWorkbench((s) => s.pendingApprovals[id] ?? NO_ASKS);
   const connState = useWorkbench((s) => s.connState);
   const send = useWorkbench((s) => s.send);
@@ -64,6 +73,13 @@ export default function SessionScreen() {
   // Twice on purpose: on arrival, and again on the way out. Everything that
   // landed while you were reading is read too — otherwise the list you go back
   // to shows an unread dot on the conversation you just closed.
+  // History lives in the agent's own transcript file on the PC, so a restarted
+  // daemon — or a session this phone never watched — still opens on its past
+  // instead of a blank screen. No-ops when live events already filled it.
+  useEffect(() => {
+    void loadTranscript(id);
+  }, [id, loadTranscript]);
+
   useFocusEffect(
     useCallback(() => {
       markSeen(id);

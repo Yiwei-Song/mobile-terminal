@@ -1,10 +1,14 @@
 import { Tabs } from "expo-router";
-import { Cog, MessageCircle } from "lucide-react-native";
+import { Cog, FolderTree, MessageCircle } from "lucide-react-native";
 
 import { color, icon as iconSize, stroke, type as typeScale } from "../../src/theme";
 
 /**
- * Sessions | Machine. Two tabs, nothing more: Sessions is the product,
+ * Sessions | Projects | Machine. Sessions answers "what needs me" and Projects
+ * answers "what exists" — the same split the desktop apps make between the
+ * active conversation and the folder sidebar, and the reason they are not one
+ * list: an attention feed sorted by urgency and a browse tree sorted by folder
+ * cannot both be the same screen without ruining one of them.
  * Machine is the utility belt (system/terminal/files/preview/tools/settings).
  * `animation: "none"` is load-bearing, not decoration — this bar gets tapped
  * 100+ times a day, so a switch animation would be the single most-repeated
@@ -37,6 +41,13 @@ export default function TabsLayout() {
           tabBarIcon: ({ color: tint }) => (
             <MessageCircle size={iconSize.md} color={tint} strokeWidth={stroke.icon} />
           ),
+        }}
+      />
+      <Tabs.Screen
+        name="projects"
+        options={{
+          title: "Projects",
+          tabBarIcon: ({ color: tint }) => <FolderTree size={iconSize.md} color={tint} strokeWidth={stroke.icon} />,
         }}
       />
       <Tabs.Screen

@@ -190,8 +190,11 @@ export class ClaudeSession {
   }
 }
 
-// Tool name plus the field a human actually reads on a phone.
-const summarize = (name: string, input: Record<string, unknown>): string => {
+// Tool name plus the field a human actually reads on a phone. Exported so the
+// on-disk transcript reader renders a replayed tool call exactly like a live
+// one — two summarizers would drift, and the difference would show as history
+// that looks subtly unlike the session it belongs to.
+export const summarize = (name: string, input: Record<string, unknown>): string => {
   const key = input?.["command"] ?? input?.["file_path"];
   return `${name}: ${typeof key === "string" ? key : JSON.stringify(input ?? {}).slice(0, 200)}`;
 };
