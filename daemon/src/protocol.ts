@@ -4,6 +4,7 @@
 export type ClientMsg =
   | { type: "auth"; token: string }
   | { type: "req"; id: string; method: "sessions.list" }
+  | { type: "req"; id: string; method: "sessions.projects" }
   | { type: "req"; id: string; method: "sessions.new"; params: { cwd: string; prompt: string; title?: string } }
   | { type: "req"; id: string; method: "sessions.send"; params: { sessionId: string; text: string } }
   | { type: "req"; id: string; method: "sessions.interrupt"; params: { sessionId: string } }
@@ -44,14 +45,49 @@ export type ServerMsg =
 
 export type SessionStatus = "running" | "waiting_on_user" | "idle" | "dead";
 
+export type Agent = "claude" | "codex";
+
 // A row of sessions.list — also the on-disk manifest entry shape.
 export interface SessionRow {
   sessionId: string;
-  agent: "claude";
+  agent: Agent;
   cwd: string;
   title: string;
   status: SessionStatus;
   updatedAt: string; // ISO
+}
+
+// One conversation, however many times it has been resumed.
+//
+// Both agents fork on resume — a resumed session is a new file under a new id
+// with its parent's history copied in — so the ids that make up one continuous
+// conversation are a chain, not a single value. `threadId` is the oldest
+// ancestor and never moves; `resumeId` is the newest leaf and is the only id it
+// is meaningful to continue from. See sessions/discover.ts.
+export interface Thread {
+  threadId: string;
+  agent: Agent;
+  cwd: string;
+  title: string;
+  status: SessionStatus;
+  updatedAt: string; // ISO
+  resumeId: string;
+  sessionIds: string[];
+}
+
+// A working directory and every thread in it. `generated` marks the machine-made
+// ones — scratchpads, worktrees, per-agent workspace copies — which stay
+// reachable but must not be what the list opens on.
+export interface Project {
+  path: string;
+  name: string;
+  generated: boolean;
+  // How many threads this project really has. `threads` may be truncated to the
+  // newest few for the wire — one folder on this machine holds 1532 sessions from
+  // an automation run — so the count is carried separately and the app can say
+  // "showing 50 of 1532" instead of quietly pretending fifty is all of them.
+  threadCount: number;
+  threads: Thread[];
 }
 
 // Machine metrics for the mobile System screen. Defined here (not in system.ts)
@@ -167,6 +203,7 @@ const dim = (v: unknown): boolean => Number.isInteger(v) && (v as number) >= 1 &
 // an inherited callable and wave the request through.
 const METHODS = new Map<string, (p: any) => boolean>([
   ["sessions.list", () => true],
+  ["sessions.projects", () => true],
   ["sessions.new", (p) => str(p?.cwd) && str(p?.prompt) && (p.title === undefined || str(p.title))],
   ["sessions.send", (p) => str(p?.sessionId) && str(p?.text)],
   ["sessions.interrupt", (p) => str(p?.sessionId)],

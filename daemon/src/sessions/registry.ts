@@ -1,5 +1,5 @@
 import { hostname } from "node:os";
-import type { ConfigInfo, PermissionEvent, PushEvent, SessionEvent } from "../protocol.js";
+import type { ConfigInfo, PermissionEvent, Project, PushEvent, SessionEvent } from "../protocol.js";
 import { setNtfyTopic, type Config } from "../config.js";
 import { VERSION } from "../version.js";
 import { snapshot, topProcesses, killProcess, type SystemDeps } from "../system.js";
@@ -9,6 +9,7 @@ import { allowedRoots, list as listDir, read as readFile, gitStatus, gitDiff, ty
 import { listeningPorts } from "../ports.js";
 import type { ToolRunner } from "../tools.js";
 import { ClaudeSession, type ClaudeDeps } from "./claude.js";
+import { discover, discoveredRoots } from "./discover.js";
 import type { Manifest, ManifestEntry } from "./manifest.js";
 
 type StatusEvent = Extract<SessionEvent, { kind: "session.status" }>;
@@ -31,7 +32,16 @@ export interface MachineDeps {
   // power.exec: that one is string-based (a shell), and these commands take a
   // filename that came off the wire. See files.ts's Exec.
   execFile: Exec;
+  // The user's home directory — where both agents write their session stores
+  // (`~/.claude/projects`, `~/.codex/sessions`). Injected rather than read from
+  // os.homedir() so a test can scan a fixture tree instead of the real machine.
+  home: string;
 }
+
+// Newest N threads per project on the wire. Enough that no real project is ever
+// truncated (the busiest hand-worked folder here holds ~60), small enough that
+// the one folder with 1532 automation sessions cannot blow up the response.
+export const PROJECT_THREAD_CAP = 50;
 
 // shutdown /r wants whole seconds; 5..120 keeps a fat-fingered 0 from rebooting
 // now and a bogus huge value from parking the machine for a day. NaN (can't come
@@ -68,6 +78,16 @@ export class Registry {
     switch (method) {
       case "sessions.list":
         return this.manifest.list();
+
+      // Every session on the machine, not just the ones this daemon started —
+      // read from the same stores the desktop apps write, so the two can never
+      // disagree. Recomputed per request: a session started in the desktop app
+      // ten seconds ago must be here, and this is two small reads per file.
+      case "sessions.projects":
+        // Truncated per project, never silently: `threadCount` keeps the real
+        // total, so a folder holding 1532 automation sessions costs a bounded
+        // payload over a phone tunnel and still reports its own size honestly.
+        return this.projects().map((p) => ({ ...p, threads: p.threads.slice(0, PROJECT_THREAD_CAP) }));
 
       case "sessions.new": {
         const s = this.start({ cwd: params.cwd, prompt: params.prompt, title: params.title });
@@ -252,8 +272,26 @@ export class Registry {
 
   // Recomputed per request, not cached: a session started a second ago must be
   // browsable now, and a removed one must stop being reachable immediately.
+  // Discovered projects join the manifest's own cwds — a session the phone can
+  // see must be a session whose files the phone can open, or half the list is
+  // decoration. This widens UI scoping, not a containment boundary; see
+  // AGENTS.md §7, which already treats every session cwd as in scope.
   private roots(): string[] {
-    return allowedRoots(this.cfg, this.manifest.list().map((s) => s.cwd));
+    return allowedRoots(this.cfg, [...this.manifest.list().map((s) => s.cwd), ...discoveredRoots(this.projects())]);
+  }
+
+  // discover() opens every transcript on the machine (two 64 KB reads each), and
+  // roots() consults it on every files.* call. A 3s memo keeps browsing a folder
+  // from re-scanning the store per request, and is still short enough that a
+  // session started in the desktop app shows up while the owner is still looking.
+  private scan: { at: number; projects: Project[] } | null = null;
+
+  private projects(): Project[] {
+    const now = Date.now();
+    if (this.scan !== null && now - this.scan.at < 3000) return this.scan.projects;
+    const projects = discover(this.machine.home);
+    this.scan = { at: now, projects };
+    return projects;
   }
 
   private entry(sessionId: string): ManifestEntry {

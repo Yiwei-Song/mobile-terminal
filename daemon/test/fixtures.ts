@@ -1,4 +1,7 @@
 import { vi } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { SDKAssistantMessage, SDKResultMessage, SDKSystemMessage } from "@anthropic-ai/claude-agent-sdk";
 import { KeepAwake, type PowerDeps } from "../src/power.js";
 import type { SystemDeps } from "../src/system.js";
@@ -124,7 +127,9 @@ export function fakeMachine(procs: Parameters<typeof fakeSi>[0] = []) {
   // their real code and the test reads the argv the runner built.
   const toolSpawn = fakeSpawn();
   const tools = new ToolRunner(toolSpawn.deps, TOOL_SPECS);
-  const machine: MachineDeps = { system: { si: fakeSi(procs) }, keepAwake, power, pty, execFile, tools };
+  // An empty temp dir, so discovery finds no agent stores and every existing
+  // test keeps the session set it declares. A discovery test passes its own tree.
+  const machine: MachineDeps = { system: { si: fakeSi(procs) }, keepAwake, power, pty, execFile, tools, home: mkdtempSync(join(tmpdir(), "wb-home-")) };
   return { machine, keepAwake, execCmds, execFileCalls, execOut, pty, ptyFake, onTerm, tools, toolSpawn };
 }
 

@@ -1,4 +1,4 @@
-import { networkInterfaces } from "node:os";
+import { homedir, networkInterfaces } from "node:os";
 import { spawn, spawnSync, exec } from "node:child_process";
 import * as si from "systeminformation";
 import { query } from "@anthropic-ai/claude-agent-sdk";
@@ -75,7 +75,7 @@ const registry = new Registry(
     if (n) notify(cfg.ntfyTopic, n.title, n.body);
   },
   cfg,
-  { system: { si }, keepAwake, power: powerDeps, pty: terms, execFile: execFileText, tools },
+  { system: { si }, keepAwake, power: powerDeps, pty: terms, execFile: execFileText, tools, home: homedir() },
 );
 
 // After the manifest is normalized and before any client can read it: clear
