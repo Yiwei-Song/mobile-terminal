@@ -1,15 +1,17 @@
 import { useCallback, useMemo, useState } from "react";
 import { LayoutAnimation, Platform, Pressable, RefreshControl, SectionList, StyleSheet, UIManager, View } from "react-native";
-import { useFocusEffect } from "expo-router";
-import { ChevronDown, ChevronRight, FolderTree, Search, SearchX, WifiOff, X } from "lucide-react-native";
+import { router, useFocusEffect } from "expo-router";
+import { ChevronDown, ChevronRight, FolderTree, Search, SearchX, ShieldAlert, WifiOff, X } from "lucide-react-native";
 import type { Project, Thread } from "@shared/protocol";
 
+import { Button } from "../../src/components/Button";
 import { EmptyState } from "../../src/components/EmptyState";
 import { Field } from "../../src/components/Field";
 import { MonoText } from "../../src/components/MonoText";
 import { Screen, TAB_EDGES } from "../../src/components/Screen";
 import { Text } from "../../src/components/Text";
 import { ThreadRow } from "../../src/components/ThreadRow";
+import type { ConnState } from "../../src/lib/client";
 import { demoMode } from "../../src/lib/demo";
 import { useReducedMotion } from "../../src/lib/motion";
 import { filterProjects, initialExpanded, previewThreads, projectNeedsYou, projectRunning, splitProjects } from "../../src/lib/projects";
@@ -214,7 +216,10 @@ function ProjectHead({ project, expanded, onPress }: { project: Project; expande
       <Chevron size={iconSize.md} color={color.textMut} strokeWidth={stroke.icon} />
       <View style={styles.headBody}>
         <View style={styles.headTop}>
-          <Text variant="strong" numberOfLines={1} style={styles.flex}>
+          {/* h2, not strong: a project and the threads under it were both 16px,
+              so the tree's two levels differed by weight alone. Hierarchy is
+              size + weight + leading together, never one of the three. */}
+          <Text variant="h2" numberOfLines={1} style={styles.flex}>
             {project.name}
           </Text>
           {/* Amber dot over a chip: at header level this is a summary of what is
@@ -225,8 +230,10 @@ function ProjectHead({ project, expanded, onPress }: { project: Project; expande
               {running} running
             </Text>
           )}
+          {/* Counted noun, not a bare number: "47" alone at the end of a row is
+              a puzzle — it could be anything the row knows about. */}
           <Text variant="meta" color="textMut">
-            {project.threadCount}
+            {project.threadCount} {project.threadCount === 1 ? "session" : "sessions"}
           </Text>
         </View>
         <MonoText numberOfLines={1} ellipsizeMode="head" style={styles.path}>
@@ -255,13 +262,26 @@ function GeneratedToggle({ count, shown, onPress }: { count: number; shown: bool
   );
 }
 
-function Empty({ connState, filtered }: { connState: string; filtered: boolean }) {
+// "This PC has no sessions" is a claim about the PC, so it may only be made
+// once the PC has actually answered. Saying it while the socket is still coming
+// up was a lie about the user's own machine — and the state it described was
+// unreachable by any action, because nothing retried.
+function Empty({ connState, filtered }: { connState: ConnState; filtered: boolean }) {
   if (filtered)
     return (
       <EmptyState
         icon={SearchX}
         title="Nothing matches"
         body="No project or session name contains that. Clear the search to see them all."
+      />
+    );
+  if (connState === "unauthorized")
+    return (
+      <EmptyState
+        icon={ShieldAlert}
+        title="Your PC turned this phone away"
+        body="The token stopped working — the daemon probably made a new one. Pair again to pick it up."
+        action={<Button label="Re-pair" onPress={() => router.push({ pathname: "/pair", params: { edit: "1" } })} />}
       />
     );
   if (connState === "offline")
@@ -272,6 +292,9 @@ function Empty({ connState, filtered }: { connState: string; filtered: boolean }
         body="This list is read from your PC's own Claude and Codex folders, so it needs the daemon running."
       />
     );
+  // Still connecting: nothing true to say yet. An empty screen for a moment
+  // beats a confident wrong answer that the user then has to disprove.
+  if (connState !== "online") return null;
   return (
     <EmptyState
       icon={FolderTree}

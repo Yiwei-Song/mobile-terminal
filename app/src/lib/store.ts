@@ -199,6 +199,12 @@ export const useWorkbench = create<Workbench>((set, get) => ({
           // There is no "session removed" event, so the list is only ever truth
           // at (re)connect time — re-list on every online, not just the first.
           void get().refreshSessions().catch(() => {});
+          // Same reason, and one more: the Projects tab's focus effect can fire
+          // before the socket is authed on a cold start, and refreshProjects
+          // no-ops without a client. Without this the tab sat on "No sessions
+          // found" until a manual pull-to-refresh — an empty state that was not
+          // only wrong but actively misleading about the PC's contents.
+          void get().refreshProjects().catch(() => {});
           void client
             ?.request<ConfigInfo>("config.get")
             .then((machine) => set({ machine }))
