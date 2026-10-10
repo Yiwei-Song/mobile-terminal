@@ -70,12 +70,10 @@ export class Registry {
         return this.manifest.list();
 
       case "sessions.new": {
-        const s = this.start({ cwd: params.cwd, prompt: params.prompt, title: params.title });
-        // Rejects if the CLI died before `system.init`, which is exactly the
-        // answer the phone needs — there is no session to talk to.
-        const sessionId = await s.id;
-        this.echo(sessionId, params.prompt);
-        return { sessionId };
+        // start() echoes the prompt itself; this only waits for the id to
+        // answer with. Rejects if the CLI died before `system.init`, which is
+        // exactly the answer the phone needs — there is no session to talk to.
+        return { sessionId: await this.start({ cwd: params.cwd, prompt: params.prompt, title: params.title }).id };
       }
 
       case "sessions.send": {
@@ -89,9 +87,9 @@ export class Registry {
         // the prompt. Awaited so a second send finds it live instead of
         // starting a duplicate. Plan 5's boot-resume calls this same path.
         const prev = this.entry(params.sessionId);
-        // The resume can come back under a forked id, so echo the id the CLI
-        // actually reported — not the one the phone asked for.
-        this.echo(await this.start({ cwd: prev.cwd, prompt: params.text, title: prev.title, resume: prev.sessionId }).id, params.text);
+        // The resume can come back under a forked id; start()'s echo uses the id
+        // the CLI actually reported, not the one the phone asked for.
+        await this.start({ cwd: prev.cwd, prompt: params.text, title: prev.title, resume: prev.sessionId }).id;
         return {};
       }
 
@@ -230,10 +228,9 @@ export class Registry {
   // The transcript is only assembled from pushed events, so text nobody echoes
   // is text a second phone never sees. Broadcast, so the sender gets it back
   // too — de-duping its own optimistic line is the client's business.
-  // Ordering: callers await the CLI's real session id before echoing, so an
-  // assistant event could in theory be pushed ahead of the prompt that caused
-  // it. Accepted — the CLI reads the prompt before it replies, so the window is
-  // the id round-trip and nothing has been observed landing inside it.
+  // Ordering: every caller pushes this before the first event the CLI emits in
+  // reply, so a client appending in arrival order always has the prompt above
+  // the answer. See start()'s onEvent for the new-session case.
   private echo(sessionId: string, text: string): void {
     this.push({ kind: "session.text", sessionId, role: "user", text });
   }
@@ -276,6 +273,13 @@ export class Registry {
     // Assigned before any event can fire: ClaudeSession emits nothing
     // synchronously from its constructor.
     let session!: ClaudeSession;
+    // The prompt's echo has to be pushed before anything the CLI says back, so
+    // it rides the `running` that `system.init` emits — the first moment the id
+    // exists — instead of an awaited `session.id`, whose continuation is a
+    // microtask the CLI's own reply can beat. Never fires if the CLI died
+    // before init: `dead` is the only status then, and there is no session to
+    // file the text under.
+    let echoed = false;
     session = ClaudeSession.start(this.deps, {
       cwd: o.cwd,
       prompt: o.prompt,
@@ -283,6 +287,12 @@ export class Registry {
       resume: o.resume,
       onEvent: (e) => {
         if (e.kind === "session.status") this.record(entry, e, session);
+        if (!echoed && e.kind === "session.status" && e.status === "running") {
+          echoed = true;
+          // entry.sessionId, not e.sessionId: record() just re-keyed it if the
+          // resume came back forked, and that is the id the manifest now uses.
+          this.echo(entry.sessionId, o.prompt);
+        }
         this.push(e);
       },
       // Async, not a sync closure: a throw here would escape the adapter's

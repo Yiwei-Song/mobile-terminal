@@ -120,6 +120,10 @@ let wired: { url: string; token: string } | null = null;
 // name an id no list has yet. Hold them until a refresh introduces the session.
 let buffered: SessionEvent[] = [];
 let refreshing = false;
+// Start order of refreshes. A run whose sessions.list left before a session was
+// created comes back not knowing it, so only the newest run is allowed to act on
+// its snapshot — see refreshSessions.
+let refreshSeq = 0;
 let itemSeq = 0;
 
 const nextId = (): string => String(++itemSeq);
@@ -223,6 +227,7 @@ export const useWorkbench = create<Workbench>((set, get) => ({
 
   async refreshSessions(userInitiated) {
     if (client === null) return;
+    const seq = ++refreshSeq;
     refreshing = true;
     try {
       // Trust the server's order: the manifest already sorts attention-first.
@@ -237,6 +242,12 @@ export const useWorkbench = create<Workbench>((set, get) => ({
     } finally {
       refreshing = false;
     }
+    // A refresh that started later asked the daemon a more recent question, so
+    // it owns the pruning below. Acting on this one's older answer would delete a
+    // session — and the events still buffered for it — that was created after
+    // this request went out, which is exactly how a new session's own prompt
+    // used to disappear from its transcript.
+    if (seq !== refreshSeq) return;
     const held = buffered;
     buffered = [];
     const known = new Set(get().sessions.map((s) => s.sessionId));
@@ -247,9 +258,15 @@ export const useWorkbench = create<Workbench>((set, get) => ({
       transcripts: onlyKnown(get().transcripts, known),
       pendingApprovals: onlyKnown(get().pendingApprovals, known),
     });
-    // Anything still unknown belongs to a session this refresh did not return —
-    // dropping it is what keeps the buffer from growing without bound.
-    for (const e of held) if (known.has(e.sessionId)) get().applyEvent(e);
+    // Anything still unknown goes back in the queue: this request can simply
+    // predate the session, and dropping it is what used to lose a new session's
+    // own prompt. The cap is what keeps a session that never appears — one
+    // genuinely removed — from growing the buffer without bound.
+    for (const e of held) {
+      if (known.has(e.sessionId)) get().applyEvent(e);
+      else buffered.push(e);
+    }
+    if (buffered.length > 200) buffered = buffered.slice(-200);
   },
 
   applyEvent(e) {
@@ -270,11 +287,16 @@ export const useWorkbench = create<Workbench>((set, get) => ({
     // this under and never will be.
     if (e.sessionId === "") return;
     const state = get();
-    if (!state.sessions.some((s) => s.sessionId === e.sessionId)) {
+    // Once one of a session's events is waiting in the buffer, every later one
+    // queues behind it — even after the session becomes known. refreshSessions
+    // publishes `sessions` and then awaits again before draining, and applying
+    // inside that window would let a reply land above the prompt it answers.
+    const queued = buffered.some((b) => b.sessionId === e.sessionId);
+    if (queued || !state.sessions.some((s) => s.sessionId === e.sessionId)) {
       buffered.push(e);
       // Sessions can also be started from another phone, so a refresh is not
-      // only sessions.new's job. Guarded, or the drop-then-rebuffer loop below
-      // would fire a request per event.
+      // only sessions.new's job. Guarded, or the re-buffer loop below would fire
+      // a request per event.
       if (!refreshing) void state.refreshSessions().catch(() => {});
       return;
     }
