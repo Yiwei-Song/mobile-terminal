@@ -6,7 +6,7 @@ work, approve what it wants to do, all from the couch.
 ## What you need
 
 - An **Android phone** and a **Windows PC** on the **same wifi**.
-- **Node.js** on the PC (v20+).
+- **Node.js** on the PC (v24 — that's what it's developed and tested on).
 - 5 minutes.
 
 ---
@@ -25,9 +25,26 @@ Node — **Allow on Private networks**.
 
 ---
 
-## 2. Phone side (Expo Go route)
+## 2. Phone side — install the app
 
-The app isn't on the Play Store yet, so you run it through **Expo Go** (Expo's dev sandbox).
+**The normal route: install the APK.** It isn't on the Play Store, so you side-load it.
+
+1. On the PC: `cd app && npm run build:apk` (~2 min). The file lands at
+   `app/android/app/build/outputs/apk/release/app-release.apk`.
+2. Get it onto the phone — copy over USB, or serve it and download it through the tunnel
+   (§ *From anywhere*). Android will ask you to allow installs from that source once.
+3. Open the app, then **scan the daemon QR** from step 1 — or tap **Enter manually** and type
+   the host / port / token. That **pairs** the app to your PC.
+
+> Needs the Android SDK + JDK 21 on the PC. Already set up on OMEN16.
+
+You're paired. Start a session, approve when it asks, done.
+
+---
+
+### Fallback: Expo Go (dev sandbox, no Android SDK needed)
+
+Useful for trying a change without a rebuild. It's a sandbox, not the real app.
 
 1. Install **Expo Go** from the Play Store.
 2. On the PC, in a **second** terminal:
@@ -46,8 +63,6 @@ The app isn't on the Play Store yet, so you run it through **Expo Go** (Expo's d
 > **Two QR codes, different jobs.** The Metro QR *loads the app*. The daemon QR *pairs the
 > app to your PC*. You scan Metro with Expo Go; you scan the daemon QR from inside the app.
 > Easy to mix up — the daemon one is the pairing one.
-
-You're paired. Start a session, approve when it asks, done.
 
 ---
 
@@ -233,31 +248,10 @@ line again when you go back to pairing over wifi. (Default is `"::"`: everything
 - **Files are read-only** — the agents edit, the phone reviews. No upload, no download.
 - **`tools.json` is read once, at daemon startup.** Restart after editing it.
 - **PC must stay awake** with the daemon running.
-- **Camera QR** needs camera permission (Expo Go asks the first time).
-- **Expo Go is dev mode** — fine for daily use, but it's a sandbox. An installable APK is the
-  next step (below).
-
----
-
-## Making an installable app (APK) — later, your choice
-
-Two ways. Pick one when you're ready; **don't run these yet**.
-
-**EAS cloud build (no Android SDK needed).** Expo builds the APK on their servers. Needs a
-free Expo account. One command:
-```
-cd app
-eas build -p android --profile preview
-```
-When it finishes, it gives you a link to download and install the APK on your phone.
-
-**Local build (no cloud, needs Android SDK).** Builds on your own machine. Needs Android
-Studio / the Android SDK installed first, then:
-```
-cd app
-npx expo run:android
-```
-This compiles and installs straight to a plugged-in phone or emulator.
+- **Camera QR** needs camera permission (the app asks the first time).
+- **The APK is arm64 only** — one known phone. Another device may need a rebuild with a
+  different `-PreactNativeArchitectures`.
+- **Not on the Play Store**, so installs are side-loads and there are no auto-updates.
 
 ---
 

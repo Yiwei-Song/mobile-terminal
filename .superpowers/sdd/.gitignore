@@ -1,0 +1,20 @@
+# Agent scratch dir. Default: ignore everything, then allow back the few
+# artifacts the project's memory depends on (see docs/STATE.md, "Docs map").
+# Process noise stays out: per-task briefs/reports/reviews, review-*.diff
+# (git already has those diffs), and ~150 verification screenshots.
+*
+!.gitignore
+
+# The ledger — every task, review finding and deferred item, with SHAs.
+!progress.md
+
+# Decisions with their evidence.
+!benchmark-palette.md
+!tailscale-report.md
+!tunnel-report.md
+
+# The design contract the redesign milestones build against (v2 = current).
+!redesign2-sessions.png
+!redesign2-conversation.png
+!redesign2-switcher.png
+!redesign2-mockups.html
